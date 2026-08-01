@@ -31,23 +31,34 @@ export default function TestUploadPage() {
     setSavedToFirestore(false);
 
     try {
+      // 1. Ambil signature dari server
+      const sigRes = await fetch("/api/upload-signature");
+      if (!sigRes.ok) throw new Error("Gagal mengambil signature");
+      const { timestamp, signature, cloudName, apiKey } = await sigRes.json();
+
+      // 2. Upload langsung ke Cloudinary (tidak lewat Vercel function)
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("api_key", apiKey);
+      formData.append("timestamp", timestamp.toString());
+      formData.append("signature", signature);
+      formData.append("folder", "the-archive");
 
-      const res = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      });
+      const uploadRes = await fetch(
+        `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+        { method: "POST", body: formData },
+      );
 
-      if (!res.ok) {
-        const errData: { error?: string } = await res.json();
-        throw new Error(errData.error || "Upload gagal");
+      if (!uploadRes.ok) {
+        const errData: { error?: { message?: string } } =
+          await uploadRes.json();
+        throw new Error(errData.error?.message || "Upload gagal");
       }
 
-      const data: CloudinaryUploadResult = await res.json();
+      const data: CloudinaryUploadResult = await uploadRes.json();
       setResult(data);
 
-      // Simpan metadata ke Firestore
+      // 3. Simpan metadata ke Firestore
       await addDoc(collection(db, "gallery"), {
         url: data.secure_url,
         publicId: data.public_id,
