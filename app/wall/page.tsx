@@ -1,17 +1,17 @@
 import Link from "next/link";
 
-export default function HomePage() {
+export default function WallPage() {
   return (
     <main className="min-h-screen flex flex-col items-center justify-center gap-6 p-8 text-center">
-      <h1 className="text-3xl font-bold">The Archive</h1>
+      <h1 className="text-2xl font-bold">Friendship Wall</h1>
       <p className="text-gray-500">
-        Loading Archive... (placeholder animasi pintu terbuka)
+        Placeholder: pesan, emoji, rating dari sahabat
       </p>
       <Link
-        href="/gallery"
+        href="/capsule"
         className="bg-blue-600 text-white px-6 py-3 rounded"
       >
-        Masuk ke Archive
+        Lanjut ke Time Capsule
       </Link>
     </main>
   );

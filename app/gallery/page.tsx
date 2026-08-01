@@ -1,17 +1,17 @@
 import Link from "next/link";
 
-export default function HomePage() {
+export default function GalleryPage() {
   return (
     <main className="min-h-screen flex flex-col items-center justify-center gap-6 p-8 text-center">
-      <h1 className="text-3xl font-bold">The Archive</h1>
+      <h1 className="text-2xl font-bold">Memory Gallery</h1>
       <p className="text-gray-500">
-        Loading Archive... (placeholder animasi pintu terbuka)
+        Placeholder: timeline kenangan, foto + cerita, video
       </p>
       <Link
-        href="/gallery"
+        href="/photobooth"
         className="bg-blue-600 text-white px-6 py-3 rounded"
       >
-        Masuk ke Archive
+        Lanjut ke Photobooth
       </Link>
     </main>
   );
