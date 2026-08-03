@@ -7,11 +7,16 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-export async function GET() {
+export async function GET(request: Request) {
+  // Ambil folder dari query parameter
+  const { searchParams } = new URL(request.url);
+  const folder = searchParams.get("folder") || "the-archive"; // fallback
+
   const timestamp = Math.round(Date.now() / 1000);
 
+  // Signature harus mencakup semua parameter yang akan dikirim (selain file & api_key)
   const signature = cloudinary.utils.api_sign_request(
-    { timestamp, folder: "the-archive" },
+    { timestamp, folder },
     process.env.CLOUDINARY_API_SECRET as string,
   );
 
