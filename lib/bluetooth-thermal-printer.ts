@@ -1,36 +1,21 @@
 /**
- * ============================================================
- * RPP02N BLUETOOTH THERMAL PRINTER
- * ============================================================
+ * RPP02N Bluetooth Thermal Printer
  *
  * Transport:
- *
- * Next.js / Browser
- *      ↓
- * Web Bluetooth
- *      ↓
- * BLE GATT
- *      ↓
- * Writable Characteristic
- *      ↓
- * ESC/POS
- *      ↓
- * RPP02N
+ * Browser
+ * -> Web Bluetooth
+ * -> BLE GATT
+ * -> Writable Characteristic
+ * -> ESC/POS
  *
  * Mendukung:
- * - Cetak struk
+ * - Cetak receipt
  * - Cetak foto thermal
  *
- * Foto:
- * - Resize 384 dots
- * - Grayscale
- * - Floyd-Steinberg dithering
- * - 1-bit monochrome
- * - SATU raster ESC/POS utuh
- *
- * PENTING:
- * Foto TIDAK dipecah menjadi beberapa command raster.
- * Yang dipecah hanya paket BLE transport.
+ * RPP02N:
+ * - 58mm
+ * - 384 dots printable width
+ * - ESC/POS
  */
 
 type BluetoothCharacteristicPropertiesLike = {
@@ -42,6 +27,7 @@ type BluetoothCharacteristicPropertiesLike = {
   indicate?: boolean;
   authenticatedSignedWrites?: boolean;
   reliableWrite?: boolean;
+  writableAuxiliaries?: boolean;
 };
 
 type BluetoothRemoteGATTCharacteristicLike = {
@@ -114,12 +100,6 @@ type NavigatorWithBluetooth = Navigator & {
   bluetooth?: BluetoothApiLike;
 };
 
-/**
- * ============================================================
- * PUBLIC TYPES
- * ============================================================
- */
-
 export interface ThermalReceiptItem {
   name: string;
   qty: number;
@@ -146,7 +126,6 @@ export interface ThermalReceiptData {
   paymentMethod: string;
 
   amountPaid: string;
-
   change: string;
 
   footer?: string;
@@ -164,49 +143,55 @@ export interface BluetoothPrinterInfo {
 
 export interface ThermalPhotoPrintOptions {
   /**
-   * Lebar print dalam dot.
+   * Lebar print RPP02N 58mm.
    *
-   * RPP02N 58mm:
+   * Default:
    * 384 dots.
    */
   widthDots?: number;
 
   /**
-   * Aktifkan Floyd-Steinberg dithering.
+   * Mengaktifkan Floyd-Steinberg dithering.
+   *
+   * Sangat direkomendasikan untuk foto.
    */
   dither?: boolean;
 
   /**
    * Threshold grayscale.
    *
-   * Semakin besar:
-   * semakin banyak pixel menjadi hitam.
+   * Lebih rendah:
+   * hasil lebih terang.
    *
-   * 135 cukup aman untuk foto.
+   * Lebih tinggi:
+   * hasil lebih gelap.
+   *
+   * Default:
+   * 128
    */
   threshold?: number;
 
   /**
-   * Jumlah line feed setelah foto.
+   * Jumlah feed line setelah foto.
    */
   feedLines?: number;
 }
 
 /**
- * ============================================================
- * PRINTER CONFIG
- * ============================================================
+ * ============================================
+ * RONGTA BLE UUID
+ * ============================================
  */
 
 /**
- * Writable characteristic yang diprioritaskan
- * untuk printer Rongta/RPP.
+ * Extension Rongta memprioritaskan FF02
+ * sebagai write characteristic.
  */
 const RONGTA_WRITE_CHARACTERISTIC = "0000ff02-0000-1000-8000-00805f9b34fb";
 
 /**
- * Beberapa BLE service yang umum ditemukan
- * pada printer thermal Rongta.
+ * Beberapa service BLE yang digunakan
+ * berbagai firmware printer Rongta.
  */
 const OPTIONAL_SERVICES: string[] = [
   "0000fee7-0000-1000-8000-00805f9b34fb",
@@ -219,56 +204,45 @@ const OPTIONAL_SERVICES: string[] = [
 ];
 
 /**
- * RPP02N 58mm menggunakan sekitar
- * 32 karakter per baris dengan font normal.
+ * ============================================
+ * PRINTER CONFIG
+ * ============================================
  */
+
 const RECEIPT_WIDTH_58MM = 32;
 
-/**
- * Lebar raster maksimal RPP02N 58mm.
- */
-const RPP02N_PRINT_WIDTH_DOTS = 384;
+const PHOTO_WIDTH_58MM = 384;
 
 /**
- * ============================================================
- * BLE TRANSPORT
- * ============================================================
+ * PENTING:
  *
- * INI BUKAN tinggi gambar.
+ * Dari extension Rongta:
  *
- * Foto tetap satu raster utuh.
- *
- * Hanya transport Bluetooth yang dipotong
- * menjadi packet kecil.
+ * mobile printer + paper < 62mm
+ * menggunakan MTU/chunk 100 byte.
  */
-const BLE_CHUNK_SIZE = 244;
+const BLE_CHUNK_SIZE = 100;
 
 /**
- * Jeda antar BLE write.
+ * Extension Rongta mengirim mobile printer
+ * tanpa artificial delay.
  *
- * Tidak terlalu besar supaya print tetap cepat,
- * namun masih memberi ruang buffer printer.
+ * Jangan beri delay 20ms seperti implementasi lama
+ * karena dapat membuat motor thermal berhenti-jalan
+ * dan menghasilkan horizontal banding.
  */
-const BLE_CHUNK_DELAY_MS = 6;
+const BLE_CHUNK_DELAY = 0;
 
-/**
- * Tunggu setelah raster image selesai dikirim
- * sebelum feed paper.
- */
-const AFTER_PHOTO_DELAY_MS = 150;
-
-/**
- * ESC/POS control bytes.
- */
 const ESC = 0x1b;
+
 const GS = 0x1d;
 
 const encoder = new TextEncoder();
 
 /**
- * ============================================================
- * ACTIVE CONNECTION STATE
- * ============================================================
+ * ============================================
+ * ACTIVE CONNECTION
+ * ============================================
  */
 
 let activeDevice: BluetoothDeviceLike | null = null;
@@ -283,9 +257,9 @@ let activeServiceUuid: string | null = null;
 let disconnectHandler: EventListener | null = null;
 
 /**
- * ============================================================
+ * ============================================
  * WEB BLUETOOTH
- * ============================================================
+ * ============================================
  */
 
 function getBluetoothApi(): BluetoothApiLike {
@@ -313,9 +287,9 @@ export function isBluetoothPrinterSupported() {
 }
 
 /**
- * ============================================================
- * COMMON UTILITIES
- * ============================================================
+ * ============================================
+ * GENERAL UTILITIES
+ * ============================================
  */
 
 function delay(milliseconds: number) {
@@ -436,9 +410,9 @@ function wrapText(text: string, width: number) {
 }
 
 /**
- * ============================================================
+ * ============================================
  * CONNECTION STATE
- * ============================================================
+ * ============================================
  */
 
 function clearConnectionState() {
@@ -459,7 +433,7 @@ function handleDisconnected() {
   clearConnectionState();
 }
 
-function attachDisconnectHandler(device: BluetoothDeviceLike) {
+function removeDisconnectHandler() {
   if (activeDevice && disconnectHandler) {
     try {
       activeDevice.removeEventListener(
@@ -467,9 +441,15 @@ function attachDisconnectHandler(device: BluetoothDeviceLike) {
         disconnectHandler,
       );
     } catch {
-      // Ignore.
+      // Abaikan.
     }
   }
+
+  disconnectHandler = null;
+}
+
+function attachDisconnectHandler(device: BluetoothDeviceLike) {
+  removeDisconnectHandler();
 
   disconnectHandler = handleDisconnected as EventListener;
 
@@ -477,9 +457,9 @@ function attachDisconnectHandler(device: BluetoothDeviceLike) {
 }
 
 /**
- * ============================================================
- * DISCOVER WRITABLE GATT CHARACTERISTIC
- * ============================================================
+ * ============================================
+ * GATT DISCOVERY
+ * ============================================
  */
 
 function canWriteCharacteristic(
@@ -487,13 +467,20 @@ function canWriteCharacteristic(
 ) {
   return Boolean(
     characteristic.properties.writeWithoutResponse ||
-    characteristic.properties.write,
+    characteristic.properties.write ||
+    characteristic.properties.writableAuxiliaries,
   );
+}
+
+interface DiscoveredPrinterEndpoint {
+  serviceUuid: string;
+
+  characteristic: BluetoothRemoteGATTCharacteristicLike;
 }
 
 async function discoverWriteCharacteristic(
   server: BluetoothRemoteGATTServerLike,
-) {
+): Promise<DiscoveredPrinterEndpoint> {
   const services = await server.getPrimaryServices();
 
   if (services.length === 0) {
@@ -503,26 +490,41 @@ async function discoverWriteCharacteristic(
   }
 
   const candidates: Array<{
-    service: BluetoothRemoteGATTServiceLike;
+    serviceUuid: string;
 
     characteristic: BluetoothRemoteGATTCharacteristicLike;
+
+    hasNotify: boolean;
   }> = [];
 
+  /**
+   * Rongta mencari service yang mempunyai:
+   *
+   * - writable characteristic
+   * - notify characteristic
+   */
   for (const service of services) {
     try {
       const characteristics = await service.getCharacteristics();
 
+      const hasNotify = characteristics.some((characteristic) =>
+        Boolean(characteristic.properties.notify),
+      );
+
       for (const characteristic of characteristics) {
         if (canWriteCharacteristic(characteristic)) {
           candidates.push({
-            service,
+            serviceUuid: service.uuid,
+
             characteristic,
+
+            hasNotify,
           });
         }
       }
     } catch (serviceError) {
       console.warn(
-        `[RPP02N] Gagal membaca service ${service.uuid}:`,
+        `[RPP02N] Tidak dapat membaca service ${service.uuid}:`,
         serviceError,
       );
     }
@@ -530,53 +532,83 @@ async function discoverWriteCharacteristic(
 
   if (candidates.length === 0) {
     throw new Error(
-      "Printer ditemukan tetapi tidak ada Bluetooth characteristic yang dapat ditulis.",
+      "Writable Bluetooth characteristic RPP02N tidak ditemukan.",
     );
   }
 
   /**
-   * Prioritas:
-   *
-   * 1. FF02
-   * 2. writeWithoutResponse
-   * 3. Writable characteristic pertama
+   * Prioritas pertama:
+   * FF02.
    */
-  const preferred = candidates.find(
+  const ff02 = candidates.find(
     ({ characteristic }) =>
       characteristic.uuid.toLowerCase() === RONGTA_WRITE_CHARACTERISTIC,
   );
 
-  const selected =
-    preferred ??
-    candidates.find(({ characteristic }) =>
-      Boolean(characteristic.properties.writeWithoutResponse),
-    ) ??
-    candidates[0];
+  if (ff02) {
+    return {
+      serviceUuid: ff02.serviceUuid,
 
-  activeWriteCharacteristic = selected.characteristic;
+      characteristic: ff02.characteristic,
+    };
+  }
 
-  activeServiceUuid = selected.service.uuid;
+  /**
+   * Prioritas kedua:
+   *
+   * writable tanpa response
+   * pada service yang juga
+   * memiliki notify characteristic.
+   */
+  const writableWithNotify = candidates.find(
+    (candidate) =>
+      candidate.hasNotify &&
+      Boolean(candidate.characteristic.properties.writeWithoutResponse),
+  );
 
-  console.log("[RPP02N] BLE printer ready:", {
-    service: selected.service.uuid,
+  if (writableWithNotify) {
+    return {
+      serviceUuid: writableWithNotify.serviceUuid,
 
-    characteristic: selected.characteristic.uuid,
+      characteristic: writableWithNotify.characteristic,
+    };
+  }
 
-    properties: selected.characteristic.properties,
-  });
+  /**
+   * Prioritas ketiga:
+   * writeWithoutResponse.
+   */
+  const writableWithoutResponse = candidates.find(({ characteristic }) =>
+    Boolean(characteristic.properties.writeWithoutResponse),
+  );
+
+  if (writableWithoutResponse) {
+    return {
+      serviceUuid: writableWithoutResponse.serviceUuid,
+
+      characteristic: writableWithoutResponse.characteristic,
+    };
+  }
+
+  /**
+   * Fallback terakhir.
+   */
+  return {
+    serviceUuid: candidates[0].serviceUuid,
+
+    characteristic: candidates[0].characteristic,
+  };
 }
 
 /**
- * ============================================================
+ * ============================================
  * CONNECT DEVICE
- * ============================================================
+ * ============================================
  */
 
 async function connectDevice(device: BluetoothDeviceLike) {
   if (!device.gatt) {
-    throw new Error(
-      "Perangkat Bluetooth ini tidak menyediakan koneksi BLE GATT.",
-    );
+    throw new Error("Perangkat ini tidak menyediakan Bluetooth GATT.");
   }
 
   let server = device.gatt;
@@ -585,49 +617,59 @@ async function connectDevice(device: BluetoothDeviceLike) {
     server = await server.connect();
   }
 
+  const endpoint = await discoverWriteCharacteristic(server);
+
+  removeDisconnectHandler();
+
   activeDevice = device;
 
   activeServer = server;
 
+  activeWriteCharacteristic = endpoint.characteristic;
+
+  activeServiceUuid = endpoint.serviceUuid;
+
   attachDisconnectHandler(device);
 
-  await discoverWriteCharacteristic(server);
+  console.log("[RPP02N] Bluetooth printer ready:", {
+    device: device.name,
 
-  if (!activeWriteCharacteristic) {
-    throw new Error("RPP02N terhubung tetapi jalur print tidak ditemukan.");
-  }
+    service: endpoint.serviceUuid,
+
+    characteristic: endpoint.characteristic.uuid,
+
+    properties: endpoint.characteristic.properties,
+  });
 }
 
 /**
- * ============================================================
- * CONNECT PRINTER
- * ============================================================
+ * ============================================
+ * CONNECT
+ * ============================================
  */
 
 export async function connectBluetoothPrinter() {
   const bluetooth = getBluetoothApi();
 
   /**
-   * Kalau ada koneksi lama,
-   * disconnect terlebih dahulu.
+   * Kalau koneksi sebelumnya
+   * masih terbuka, putuskan.
    */
   if (activeDevice?.gatt?.connected) {
     try {
       activeDevice.gatt.disconnect?.();
     } catch {
-      // Ignore.
+      // Abaikan.
     }
   }
 
-  clearConnectionState();
+  removeDisconnectHandler();
+
+  clearAllConnectionState();
 
   let device: BluetoothDeviceLike;
 
   try {
-    /**
-     * requestDevice HARUS berasal dari
-     * aksi klik user.
-     */
     device = await bluetooth.requestDevice({
       filters: [
         {
@@ -664,9 +706,9 @@ export async function connectBluetoothPrinter() {
 }
 
 /**
- * ============================================================
+ * ============================================
  * RESTORE PREVIOUS PRINTER
- * ============================================================
+ * ============================================
  */
 
 export async function restoreBluetoothPrinter() {
@@ -691,7 +733,7 @@ export async function restoreBluetoothPrinter() {
 
     return true;
   } catch (restoreError) {
-    console.warn("[RPP02N] Restore gagal:", restoreError);
+    console.warn("[RPP02N] Restore printer gagal:", restoreError);
 
     clearAllConnectionState();
 
@@ -700,9 +742,9 @@ export async function restoreBluetoothPrinter() {
 }
 
 /**
- * ============================================================
+ * ============================================
  * PRINTER INFO
- * ============================================================
+ * ============================================
  */
 
 export function getBluetoothPrinterInfo(): BluetoothPrinterInfo {
@@ -724,9 +766,9 @@ export function isBluetoothPrinterConnected() {
 }
 
 /**
- * ============================================================
+ * ============================================
  * BLE WRITE
- * ============================================================
+ * ============================================
  */
 
 function getWriteCharacteristic() {
@@ -747,16 +789,19 @@ async function writeCharacteristic(
   data: Uint8Array,
 ) {
   /**
-   * Buat ArrayBuffer baru supaya TypeScript
-   * dan Web Bluetooth tidak bermasalah
-   * dengan SharedArrayBuffer / offset.
+   * Pastikan browser menerima ArrayBuffer biasa.
    */
-  const copied = new Uint8Array(data.length);
+  const copy = new Uint8Array(data);
 
-  copied.set(data);
+  const buffer = copy.buffer.slice(
+    copy.byteOffset,
+    copy.byteOffset + copy.byteLength,
+  ) as ArrayBuffer;
 
-  const buffer = copied.buffer;
-
+  /**
+   * Rongta menggunakan
+   * writeValueWithoutResponse.
+   */
   if (characteristic.writeValueWithoutResponse) {
     await characteristic.writeValueWithoutResponse(buffer);
 
@@ -775,7 +820,9 @@ async function writeCharacteristic(
     return;
   }
 
-  throw new Error("Bluetooth characteristic tidak mendukung operasi write.");
+  throw new Error(
+    "Bluetooth characteristic RPP02N tidak mendukung operasi write.",
+  );
 }
 
 async function writeToPrinter(data: Uint8Array) {
@@ -783,13 +830,13 @@ async function writeToPrinter(data: Uint8Array) {
 
   try {
     /**
-     * ========================================================
-     * PENTING
-     * ========================================================
+     * PENTING:
      *
-     * Hanya transport BLE yang dipecah.
+     * Data ESC/POS tetap utuh secara logical.
      *
-     * BUKAN command ESC/POS-nya.
+     * Yang dipecah di sini HANYA
+     * transport BLE menjadi packet
+     * 100 byte.
      */
     for (let offset = 0; offset < data.length; offset += BLE_CHUNK_SIZE) {
       if (!activeServer?.connected) {
@@ -801,10 +848,13 @@ async function writeToPrinter(data: Uint8Array) {
       await writeCharacteristic(characteristic, chunk);
 
       /**
-       * Jeda kecil untuk buffer RPP02N.
+       * Untuk RPP02N 58mm:
+       *
+       * extension Rongta memakai
+       * delay 0.
        */
-      if (offset + BLE_CHUNK_SIZE < data.length) {
-        await delay(BLE_CHUNK_DELAY_MS);
+      if (BLE_CHUNK_DELAY > 0) {
+        await delay(BLE_CHUNK_DELAY);
       }
     }
   } catch (writeError) {
@@ -823,15 +873,15 @@ async function writeToPrinter(data: Uint8Array) {
 }
 
 /**
- * ============================================================
+ * ============================================
  * TEST PRINTER
- * ============================================================
+ * ============================================
  */
 
 export async function testBluetoothPrinter() {
   const data = concatBytes(
     /**
-     * Initialize printer.
+     * Initialize.
      */
     Uint8Array.from([ESC, 0x40]),
 
@@ -858,16 +908,24 @@ export async function testBluetoothPrinter() {
 
     encode("Printer siap digunakan\n"),
 
-    encode("\n\n\n"),
+    /**
+     * Feed.
+     */
+    Uint8Array.from([ESC, 0x64, 0x04]),
+
+    /**
+     * Reset alignment.
+     */
+    Uint8Array.from([ESC, 0x61, 0x00]),
   );
 
   await writeToPrinter(data);
 }
 
 /**
- * ============================================================
- * LOAD IMAGE FROM CLOUDINARY
- * ============================================================
+ * ============================================
+ * PHOTO LOADER
+ * ============================================
  */
 
 async function loadPhotoImageData(imageUrl: string, requestedWidth: number) {
@@ -885,16 +943,13 @@ async function loadPhotoImageData(imageUrl: string, requestedWidth: number) {
 
   try {
     /**
-     * Lebar harus kelipatan 8.
+     * ESC/POS raster bekerja
+     * per 8 horizontal pixel.
      *
-     * 1 byte raster = 8 pixel.
+     * Jadi lebarnya harus
+     * kelipatan 8.
      */
-    const safeRequestedWidth = Math.min(
-      RPP02N_PRINT_WIDTH_DOTS,
-      Math.max(8, requestedWidth),
-    );
-
-    const width = Math.floor(safeRequestedWidth / 8) * 8;
+    const width = Math.max(8, Math.floor(requestedWidth / 8) * 8);
 
     const ratio = width / bitmap.width;
 
@@ -922,8 +977,8 @@ async function loadPhotoImageData(imageUrl: string, requestedWidth: number) {
     context.fillRect(0, 0, width, height);
 
     /**
-     * Gunakan smoothing berkualitas tinggi
-     * sebelum masuk ke proses grayscale.
+     * Gunakan smoothing saat resize
+     * supaya wajah tidak terlalu kasar.
      */
     context.imageSmoothingEnabled = true;
 
@@ -935,6 +990,7 @@ async function loadPhotoImageData(imageUrl: string, requestedWidth: number) {
 
     return {
       width,
+
       height,
 
       data: imageData.data,
@@ -945,9 +1001,9 @@ async function loadPhotoImageData(imageUrl: string, requestedWidth: number) {
 }
 
 /**
- * ============================================================
- * IMAGE → 1 BIT MONOCHROME
- * ============================================================
+ * ============================================
+ * GRAYSCALE + DITHERING
+ * ============================================
  */
 
 function createMonochromeRaster(
@@ -961,28 +1017,19 @@ function createMonochromeRaster(
 
   useDither: boolean,
 ) {
-  /**
-   * Grayscale float buffer.
-   *
-   * Float diperlukan karena
-   * Floyd-Steinberg menyebarkan error
-   * ke pixel berikutnya.
-   */
   const grayscale = new Float32Array(width * height);
 
   /**
-   * ========================================================
-   * RGB → GRAYSCALE
-   * ========================================================
+   * RGB -> luminance.
    */
-
   for (let pixel = 0; pixel < width * height; pixel += 1) {
     const rgbaIndex = pixel * 4;
 
     const alpha = rgba[rgbaIndex + 3] / 255;
 
     /**
-     * Blend transparency ke background putih.
+     * Blend transparent area
+     * dengan putih.
      */
     const red = 255 + (rgba[rgbaIndex] - 255) * alpha;
 
@@ -996,11 +1043,10 @@ function createMonochromeRaster(
   const blackPixels = new Uint8Array(width * height);
 
   /**
-   * ========================================================
+   * ========================================
    * FLOYD-STEINBERG DITHERING
-   * ========================================================
+   * ========================================
    */
-
   if (useDither) {
     for (let y = 0; y < height; y += 1) {
       for (let x = 0; x < width; x += 1) {
@@ -1012,44 +1058,43 @@ function createMonochromeRaster(
 
         blackPixels[index] = newPixel === 0 ? 1 : 0;
 
-        const quantizationError = oldPixel - newPixel;
+        const error = oldPixel - newPixel;
 
         /**
-         * Right pixel:
-         * 7 / 16
+         * Right.
          */
         if (x + 1 < width) {
-          grayscale[index + 1] += quantizationError * (7 / 16);
+          grayscale[index + 1] += error * (7 / 16);
         }
 
+        /**
+         * Bottom.
+         */
         if (y + 1 < height) {
           /**
-           * Bottom-left:
-           * 3 / 16
+           * Bottom-left.
            */
           if (x > 0) {
-            grayscale[index + width - 1] += quantizationError * (3 / 16);
+            grayscale[index + width - 1] += error * (3 / 16);
           }
 
           /**
-           * Bottom:
-           * 5 / 16
+           * Bottom.
            */
-          grayscale[index + width] += quantizationError * (5 / 16);
+          grayscale[index + width] += error * (5 / 16);
 
           /**
-           * Bottom-right:
-           * 1 / 16
+           * Bottom-right.
            */
           if (x + 1 < width) {
-            grayscale[index + width + 1] += quantizationError * (1 / 16);
+            grayscale[index + width + 1] += error * (1 / 16);
           }
         }
       }
     }
   } else {
     /**
-     * Simple threshold fallback.
+     * Simple threshold.
      */
     for (let index = 0; index < grayscale.length; index += 1) {
       blackPixels[index] = grayscale[index] < threshold ? 1 : 0;
@@ -1057,9 +1102,9 @@ function createMonochromeRaster(
   }
 
   /**
-   * ========================================================
-   * PIXELS → ESC/POS 1-BIT RASTER
-   * ========================================================
+   * ========================================
+   * 1-BIT RASTER
+   * ========================================
    */
 
   const widthBytes = Math.ceil(width / 8);
@@ -1070,9 +1115,6 @@ function createMonochromeRaster(
     for (let x = 0; x < width; x += 1) {
       const pixelIndex = y * width + x;
 
-      /**
-       * 0 = white.
-       */
       if (blackPixels[pixelIndex] === 0) {
         continue;
       }
@@ -1093,17 +1135,21 @@ function createMonochromeRaster(
 }
 
 /**
- * ============================================================
+ * ============================================
  * ESC/POS RASTER HEADER
- * ============================================================
+ * ============================================
  *
  * GS v 0
  *
- * Format:
- *
- * 1D 76 30 m xL xH yL yH d...
+ * xL xH = width byte
+ * yL yH = height pixel
  */
-function createRasterHeader(widthBytes: number, height: number) {
+
+function createRasterHeader(
+  widthBytes: number,
+
+  height: number,
+) {
   const xLow = widthBytes & 0xff;
 
   const xHigh = (widthBytes >> 8) & 0xff;
@@ -1116,9 +1162,9 @@ function createRasterHeader(widthBytes: number, height: number) {
 }
 
 /**
- * ============================================================
+ * ============================================
  * PRINT PHOTO
- * ============================================================
+ * ============================================
  */
 
 export async function printBluetoothPhoto(
@@ -1132,41 +1178,33 @@ export async function printBluetoothPhoto(
     );
   }
 
-  /**
-   * Default:
-   *
-   * 384 dots untuk RPP02N.
-   */
-  const widthDots = Math.min(
-    RPP02N_PRINT_WIDTH_DOTS,
-    Math.max(8, options.widthDots ?? RPP02N_PRINT_WIDTH_DOTS),
-  );
+  const widthDots = options.widthDots ?? PHOTO_WIDTH_58MM;
 
   /**
-   * Dari hasil print sebelumnya:
+   * Sebelumnya 145.
    *
-   * 145 sedikit terlalu gelap.
-   *
-   * Default kita turunkan menjadi 135.
+   * 128 membuat hasil sedikit
+   * lebih terang sehingga wajah
+   * tidak terlalu hitam.
    */
-  const threshold = Math.min(255, Math.max(0, options.threshold ?? 135));
+  const threshold = Math.min(255, Math.max(0, options.threshold ?? 128));
 
   const useDither = options.dither ?? true;
 
-  const feedLines = Math.max(0, options.feedLines ?? 4);
+  const feedLines = Math.min(255, Math.max(0, options.feedLines ?? 4));
 
   /**
-   * ========================================================
+   * ========================================
    * LOAD IMAGE
-   * ========================================================
+   * ========================================
    */
 
   const image = await loadPhotoImageData(imageUrl, widthDots);
 
   /**
-   * ========================================================
-   * CONVERT TO MONOCHROME RASTER
-   * ========================================================
+   * ========================================
+   * CONVERT IMAGE
+   * ========================================
    */
 
   const { raster, widthBytes } = createMonochromeRaster(
@@ -1178,89 +1216,79 @@ export async function printBluetoothPhoto(
   );
 
   /**
-   * ========================================================
-   * SATU COMMAND RASTER UTUH
-   * ========================================================
+   * ========================================
+   * IMPORTANT FIX
+   * ========================================
    *
-   * INI PERBAIKAN UTAMA.
+   * Versi sebelumnya melakukan:
    *
-   * Sebelumnya:
+   * GS v 0
+   * 96 row
    *
-   * GS v 0 + 96 rows
-   * GS v 0 + 96 rows
-   * GS v 0 + 96 rows
+   * GS v 0
+   * 96 row
    *
-   * ❌ menghasilkan horizontal banding.
+   * GS v 0
+   * 96 row
+   *
+   * Akibatnya setiap command baru dapat
+   * menyebabkan motor printer bergerak
+   * sedikit dan foto terlihat patah.
    *
    * Sekarang:
    *
-   * GS v 0 + SELURUH FOTO
+   * SATU GS v 0
+   * + SATU FOTO UTUH.
    *
-   * ✅ satu raster command utuh.
+   * Yang dipecah hanyalah packet BLE.
    */
 
-  const rasterCommand = concatBytes(
-    /**
-     * Initialize printer.
-     */
-    Uint8Array.from([ESC, 0x40]),
-
-    /**
-     * Center.
-     */
-    Uint8Array.from([ESC, 0x61, 0x01]),
-
-    /**
-     * Satu raster header untuk
-     * seluruh gambar.
-     */
-    createRasterHeader(widthBytes, image.height),
-
-    /**
-     * Seluruh image bitmap.
-     */
-    raster,
-  );
+  const commands: Uint8Array[] = [];
 
   /**
-   * ========================================================
-   * SEND
-   * ========================================================
-   *
-   * writeToPrinter() boleh membagi data menjadi
-   * packet BLE.
-   *
-   * Namun ESC/POS tetap membaca satu raster
-   * command yang berkesinambungan.
+   * Initialize printer.
    */
-
-  await writeToPrinter(rasterCommand);
+  commands.push(Uint8Array.from([ESC, 0x40]));
 
   /**
-   * Beri printer kesempatan menyelesaikan raster.
+   * Center image.
    */
-  await delay(AFTER_PHOTO_DELAY_MS);
+  commands.push(Uint8Array.from([ESC, 0x61, 0x01]));
 
   /**
-   * ========================================================
-   * FEED PAPER
-   * ========================================================
+   * ONE COMPLETE IMAGE.
    */
+  commands.push(createRasterHeader(widthBytes, image.height));
 
+  commands.push(raster);
+
+  /**
+   * Feed paper.
+   */
   if (feedLines > 0) {
-    await writeToPrinter(encode("\n".repeat(feedLines)));
+    commands.push(Uint8Array.from([ESC, 0x64, feedLines]));
   }
 
   /**
    * Reset alignment.
    */
-  await writeToPrinter(Uint8Array.from([ESC, 0x61, 0x00]));
+  commands.push(Uint8Array.from([ESC, 0x61, 0x00]));
+
+  const printStream = concatBytes(...commands);
+
+  /**
+   * SATU kali writeToPrinter().
+   *
+   * Tidak ada pause antar
+   * bagian raster gambar.
+   */
+  await writeToPrinter(printStream);
 }
 
 /**
- * ============================================================
+ * ============================================
  * RECEIPT BUILDER
- * ============================================================
+ * ============================================
  */
 
 function buildReceipt(
@@ -1307,10 +1335,13 @@ function buildReceipt(
   commands.push(encode(`${separator(width)}\n`));
 
   /**
-   * Align left.
+   * Left align.
    */
   commands.push(Uint8Array.from([ESC, 0x61, 0x00]));
 
+  /**
+   * Transaction info.
+   */
   commands.push(
     encode(`${twoColumns("No. Invoice", receipt.invoiceNumber, width)}\n`),
   );
@@ -1328,7 +1359,7 @@ function buildReceipt(
   commands.push(encode(`${separator(width)}\n`));
 
   /**
-   * ITEMS.
+   * Items.
    */
   receipt.items.forEach((item) => {
     wrapText(item.name, width).forEach((line) => {
@@ -1345,7 +1376,7 @@ function buildReceipt(
   commands.push(encode(`${separator(width)}\n`));
 
   /**
-   * TOTAL.
+   * Total.
    */
   commands.push(Uint8Array.from([ESC, 0x45, 0x01]));
 
@@ -1362,7 +1393,7 @@ function buildReceipt(
   commands.push(encode(`${separator(width)}\n`));
 
   /**
-   * FOOTER.
+   * Footer.
    */
   commands.push(Uint8Array.from([ESC, 0x61, 0x01]));
 
@@ -1372,7 +1403,10 @@ function buildReceipt(
     commands.push(encode(`${centerText(line, width)}\n`));
   });
 
-  commands.push(encode("\n\n\n"));
+  /**
+   * Feed paper.
+   */
+  commands.push(Uint8Array.from([ESC, 0x64, 0x04]));
 
   /**
    * Reset alignment.
@@ -1380,7 +1414,7 @@ function buildReceipt(
   commands.push(Uint8Array.from([ESC, 0x61, 0x00]));
 
   /**
-   * Reset font size.
+   * Reset character size.
    */
   commands.push(Uint8Array.from([GS, 0x21, 0x00]));
 
@@ -1388,9 +1422,9 @@ function buildReceipt(
 }
 
 /**
- * ============================================================
+ * ============================================
  * PRINT RECEIPT
- * ============================================================
+ * ============================================
  */
 
 export async function printBluetoothReceipt(
@@ -1420,22 +1454,13 @@ export async function printBluetoothReceipt(
 }
 
 /**
- * ============================================================
+ * ============================================
  * DISCONNECT
- * ============================================================
+ * ============================================
  */
 
 export async function disconnectBluetoothPrinter() {
-  if (activeDevice && disconnectHandler) {
-    try {
-      activeDevice.removeEventListener(
-        "gattserverdisconnected",
-        disconnectHandler,
-      );
-    } catch {
-      // Ignore.
-    }
-  }
+  removeDisconnectHandler();
 
   if (activeDevice?.gatt?.connected) {
     try {
@@ -1444,8 +1469,6 @@ export async function disconnectBluetoothPrinter() {
       console.warn("[RPP02N] Disconnect error:", disconnectError);
     }
   }
-
-  disconnectHandler = null;
 
   clearAllConnectionState();
 }

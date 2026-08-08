@@ -71,11 +71,8 @@ const EMPTY_PRINTER_INFO: BluetoothPrinterInfo = {
 };
 
 /**
- * ============================================================
- * FETCH ARCHIVE
- * ============================================================
+ * Mengambil satu halaman archive.
  */
-
 async function fetchArchivePage(
   user: User,
 
@@ -148,12 +145,6 @@ function formatArchiveDate(value: string | null) {
 }
 
 export default function PhotoArchivePage() {
-  /**
-   * ==========================================================
-   * ARCHIVE STATE
-   * ==========================================================
-   */
-
   const [photos, setPhotos] = useState<ArchivePhoto[]>([]);
 
   const [activeItems, setActiveItems] = useState<ActivePhotoboothItem[]>([]);
@@ -171,17 +162,17 @@ export default function PhotoArchivePage() {
   const [error, setError] = useState<string | null>(null);
 
   /**
-   * ==========================================================
+   * ============================================
    * PRINTER STATE
-   * ==========================================================
+   * ============================================
    */
+
+  const [printerSupported] = useState(() => isBluetoothPrinterSupported());
 
   const [printerInfo, setPrinterInfo] =
     useState<BluetoothPrinterInfo>(EMPTY_PRINTER_INFO);
 
-  const [printerSupported, setPrinterSupported] = useState(true);
-
-  const [restoringPrinter, setRestoringPrinter] = useState(true);
+  const [restoringPrinter, setRestoringPrinter] = useState(printerSupported);
 
   const [connectingPrinter, setConnectingPrinter] = useState(false);
 
@@ -194,38 +185,20 @@ export default function PhotoArchivePage() {
   const [printerMessage, setPrinterMessage] = useState<string | null>(null);
 
   /**
-   * ==========================================================
-   * RESTORE BLUETOOTH PRINTER
-   * ==========================================================
+   * ============================================
+   * RESTORE PRINTER
+   * ============================================
    */
 
   useEffect(() => {
+    if (!printerSupported) {
+      return;
+    }
+
     let mounted = true;
 
-    void (async () => {
-      /**
-       * Membuat update state asynchronous
-       * terhadap execution effect.
-       */
-      await Promise.resolve();
-
-      if (!mounted) {
-        return;
-      }
-
-      const supported = isBluetoothPrinterSupported();
-
-      setPrinterSupported(supported);
-
-      if (!supported) {
-        setRestoringPrinter(false);
-
-        return;
-      }
-
-      try {
-        const restored = await restoreBluetoothPrinter();
-
+    void restoreBluetoothPrinter()
+      .then((restored) => {
         if (!mounted) {
           return;
         }
@@ -235,30 +208,31 @@ export default function PhotoArchivePage() {
         if (restored) {
           setPrinterMessage("RPP02N berhasil terhubung kembali.");
         }
-      } catch (restoreError) {
-        console.warn("Restore Bluetooth printer:", restoreError);
+      })
+      .catch((restoreError) => {
+        console.warn("Restore printer:", restoreError);
 
         if (!mounted) {
           return;
         }
 
         setPrinterInfo(EMPTY_PRINTER_INFO);
-      } finally {
+      })
+      .finally(() => {
         if (mounted) {
           setRestoringPrinter(false);
         }
-      }
-    })();
+      });
 
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [printerSupported]);
 
   /**
-   * ==========================================================
-   * FIRESTORE PHOTOBOOTH MONITOR
-   * ==========================================================
+   * ============================================
+   * MONITOR PHOTOBOOTH
+   * ============================================
    */
 
   useEffect(() => {
@@ -291,9 +265,9 @@ export default function PhotoArchivePage() {
   }, []);
 
   /**
-   * ==========================================================
-   * INITIAL ARCHIVE LOAD
-   * ==========================================================
+   * ============================================
+   * LOAD ARCHIVE
+   * ============================================
    */
 
   useEffect(() => {
@@ -355,9 +329,9 @@ export default function PhotoArchivePage() {
   }, []);
 
   /**
-   * ==========================================================
+   * ============================================
    * ACTIVE PHOTO MAP
-   * ==========================================================
+   * ============================================
    */
 
   const activeByPublicId = useMemo(() => {
@@ -373,9 +347,9 @@ export default function PhotoArchivePage() {
   }, [activeItems]);
 
   /**
-   * ==========================================================
+   * ============================================
    * PRINTER HELPERS
-   * ==========================================================
+   * ============================================
    */
 
   function updatePrinterInfo() {
@@ -389,13 +363,13 @@ export default function PhotoArchivePage() {
   }
 
   /**
-   * ==========================================================
+   * ============================================
    * CONNECT PRINTER
-   * ==========================================================
+   * ============================================
    */
 
   async function handleConnectPrinter() {
-    if (connectingPrinter || Boolean(printingPublicId)) {
+    if (connectingPrinter || printingPublicId) {
       return;
     }
 
@@ -408,9 +382,7 @@ export default function PhotoArchivePage() {
 
       updatePrinterInfo();
 
-      setPrinterMessage(
-        "RPP02N berhasil terhubung. Foto sekarang siap dicetak.",
-      );
+      setPrinterMessage("RPP02N berhasil terhubung. Foto siap dicetak.");
     } catch (connectError) {
       console.error("Connect thermal printer:", connectError);
 
@@ -427,13 +399,13 @@ export default function PhotoArchivePage() {
   }
 
   /**
-   * ==========================================================
+   * ============================================
    * DISCONNECT PRINTER
-   * ==========================================================
+   * ============================================
    */
 
   async function handleDisconnectPrinter() {
-    if (disconnectingPrinter || Boolean(printingPublicId)) {
+    if (disconnectingPrinter || printingPublicId) {
       return;
     }
 
@@ -457,9 +429,9 @@ export default function PhotoArchivePage() {
   }
 
   /**
-   * ==========================================================
-   * PRINT PHOTO
-   * ==========================================================
+   * ============================================
+   * PRINT THERMAL PHOTO
+   * ============================================
    */
 
   async function handlePrintPhoto(photo: ArchivePhoto) {
@@ -474,11 +446,8 @@ export default function PhotoArchivePage() {
     try {
       /**
        * Kalau printer belum terhubung,
-       * langsung buka Bluetooth chooser.
-       *
-       * Karena function ini dipanggil langsung
-       * dari onClick, requestDevice masih berada
-       * dalam user interaction.
+       * chooser Bluetooth langsung muncul
+       * dari tombol Cetak Thermal.
        */
       if (!isBluetoothPrinterConnected()) {
         await connectBluetoothPrinter();
@@ -487,27 +456,25 @@ export default function PhotoArchivePage() {
       }
 
       /**
-       * ======================================================
-       * PHOTO PRINT SETTINGS
-       * ======================================================
+       * ========================================
+       * FINAL PHOTO CONFIG
+       * ========================================
        *
        * 384 dots:
-       * lebar penuh RPP02N.
+       * full printable width RPP02N.
        *
-       * threshold 135:
-       * lebih terang dibanding hasil sebelumnya.
+       * threshold 128:
+       * lebih terang daripada hasil sebelumnya.
        *
        * dither:
-       * Floyd-Steinberg.
-       *
-       * Foto sekarang menjadi SATU raster command utuh.
+       * mempertahankan detail wajah.
        */
       await printBluetoothPhoto(photo.url, {
         widthDots: 384,
 
         dither: true,
 
-        threshold: 135,
+        threshold: 128,
 
         feedLines: 4,
       });
@@ -531,9 +498,9 @@ export default function PhotoArchivePage() {
   }
 
   /**
-   * ==========================================================
+   * ============================================
    * LOAD MORE
-   * ==========================================================
+   * ============================================
    */
 
   async function handleLoadMore() {
@@ -581,9 +548,9 @@ export default function PhotoArchivePage() {
   }
 
   /**
-   * ==========================================================
-   * REFRESH
-   * ==========================================================
+   * ============================================
+   * REFRESH ARCHIVE
+   * ============================================
    */
 
   async function handleRefresh() {
@@ -621,9 +588,9 @@ export default function PhotoArchivePage() {
   }
 
   /**
-   * ==========================================================
-   * DOWNLOAD
-   * ==========================================================
+   * ============================================
+   * DOWNLOAD PHOTO
+   * ============================================
    */
 
   async function handleDownload(photo: ArchivePhoto) {
@@ -659,9 +626,9 @@ export default function PhotoArchivePage() {
   }
 
   /**
-   * ==========================================================
-   * PERMANENT DELETE
-   * ==========================================================
+   * ============================================
+   * DELETE PHOTO
+   * ============================================
    */
 
   async function handlePermanentDelete(photo: ArchivePhoto) {
@@ -734,12 +701,6 @@ File akan dihapus dari Cloudinary dan tidak dapat dipulihkan melalui The Archive
 
   const printerConnected = printerInfo.connected;
 
-  /**
-   * ==========================================================
-   * RENDER
-   * ==========================================================
-   */
-
   return (
     <div className="p-4 pt-20 sm:p-6 sm:pt-20 lg:p-8">
       {/* =========================
@@ -768,17 +729,13 @@ File akan dihapus dari Cloudinary dan tidak dapat dipulihkan melalui The Archive
           </div>
 
           <div className="flex flex-wrap gap-2">
-            {/* =========================
-                PRINTER CONNECTION
-            ========================== */}
+            {/* PRINTER */}
             {printerSupported && !restoringPrinter && (
               <>
                 {printerConnected ? (
                   <button
                     type="button"
-                    onClick={() => {
-                      void handleDisconnectPrinter();
-                    }}
+                    onClick={() => void handleDisconnectPrinter()}
                     disabled={disconnectingPrinter || Boolean(printingPublicId)}
                     className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
                   >
@@ -787,15 +744,15 @@ File akan dihapus dari Cloudinary dan tidak dapat dipulihkan melalui The Archive
                     ) : (
                       <CheckCircle2 size={15} />
                     )}
-                    {printerInfo.deviceName || "RPP02N"} Terhubung
+
+                    {printerInfo.deviceName || "RPP02N"}
+
                     <Unplug size={14} />
                   </button>
                 ) : (
                   <button
                     type="button"
-                    onClick={() => {
-                      void handleConnectPrinter();
-                    }}
+                    onClick={() => void handleConnectPrinter()}
                     disabled={connectingPrinter}
                     className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-[#6D4FC2] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-[#5940A7] disabled:cursor-not-allowed disabled:opacity-50"
                   >
@@ -820,14 +777,9 @@ File akan dihapus dari Cloudinary dan tidak dapat dipulihkan melalui The Archive
               </div>
             )}
 
-            {/* =========================
-                REFRESH
-            ========================== */}
             <button
               type="button"
-              onClick={() => {
-                void handleRefresh();
-              }}
+              onClick={() => void handleRefresh()}
               disabled={refreshing || loading}
               className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[#D8C8F0] bg-white/70 px-4 py-2.5 text-xs font-semibold text-[#6D4FC2] transition hover:bg-[#E9D8FD]/50 disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -871,7 +823,8 @@ File akan dihapus dari Cloudinary dan tidak dapat dipulihkan melalui The Archive
 
               {printerConnected ? (
                 <p className="mt-0.5 text-xs text-emerald-700">
-                  {printerInfo.deviceName} siap mencetak foto thermal 58mm.
+                  {printerInfo.deviceName || "RPP02N"} siap mencetak foto
+                  thermal 58mm.
                 </p>
               ) : (
                 <p className="mt-0.5 text-xs leading-5 text-[#3B2E52]/55">
@@ -889,13 +842,10 @@ File akan dihapus dari Cloudinary dan tidak dapat dipulihkan melalui The Archive
         </div>
       )}
 
-      {/* =========================
-          UNSUPPORTED
-      ========================== */}
       {!printerSupported && (
         <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-xs leading-5 text-amber-800">
           Web Bluetooth tidak tersedia pada browser ini. Gunakan Google Chrome
-          terbaru untuk mencetak melalui RPP02N.
+          terbaru untuk mencetak menggunakan RPP02N.
         </div>
       )}
 
@@ -903,9 +853,9 @@ File akan dihapus dari Cloudinary dan tidak dapat dipulihkan melalui The Archive
           PRINT INFO
       ========================== */}
       <div className="mb-6 rounded-2xl border border-blue-200/70 bg-blue-50/70 px-4 py-4 text-xs leading-5 text-blue-800">
-        <span className="font-semibold">Cetak Thermal:</span> foto dikonversi
-        menjadi hitam-putih dengan dithering dan disesuaikan ke lebar kertas
-        58mm. Proses cetak foto dapat membutuhkan beberapa detik.
+        <span className="font-semibold">Cetak Thermal:</span> foto akan otomatis
+        diubah menjadi grayscale dan dithering hitam-putih, kemudian dicetak
+        penuh pada lebar 58mm RPP02N.
       </div>
 
       {/* =========================
@@ -1000,9 +950,7 @@ File akan dihapus dari Cloudinary dan tidak dapat dipulihkan melalui The Archive
                   key={photo.publicId}
                   className="overflow-hidden rounded-2xl border border-[#D8C8F0]/35 bg-white/75 p-3 shadow-sm backdrop-blur-sm"
                 >
-                  {/* =========================
-                        PHOTO
-                    ========================== */}
+                  {/* PHOTO */}
                   <div className="relative overflow-hidden rounded-xl bg-[#F5F1FA]">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
@@ -1012,28 +960,24 @@ File akan dihapus dari Cloudinary dan tidak dapat dipulihkan melalui The Archive
                       loading="lazy"
                     />
 
-                    {/* =========================
-                          PRINT OVERLAY
-                      ========================== */}
+                    {/* PRINT OVERLAY */}
                     {isPrinting && (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#3B2E52]/70 px-4 text-center text-white backdrop-blur-sm">
-                        <Loader2 size={28} className="animate-spin" />
+                      <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#3B2E52]/75 text-white backdrop-blur-sm">
+                        <Loader2 size={26} className="animate-spin" />
 
                         <p className="mt-3 text-xs font-semibold">
-                          Mencetak foto thermal...
+                          Mencetak foto...
                         </p>
 
-                        <p className="mt-1 text-[10px] leading-4 text-white/70">
-                          Sedang mengubah foto menjadi raster 384 dot
+                        <p className="mt-1 text-[10px] text-white/70">
+                          Jangan matikan printer
                         </p>
                       </div>
                     )}
                   </div>
 
                   <div className="px-1 pb-1 pt-3">
-                    {/* =========================
-                          STATUS
-                      ========================== */}
+                    {/* STATUS */}
                     <div className="mb-3 flex items-center justify-between gap-2">
                       <span
                         className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${
@@ -1050,13 +994,12 @@ File akan dihapus dari Cloudinary dan tidak dapat dipulihkan melalui The Archive
                       </span>
                     </div>
 
-                    {/* =========================
-                          METADATA
-                      ========================== */}
+                    {/* DATE */}
                     <p className="text-xs leading-5 text-[#3B2E52]/55">
                       {formatArchiveDate(photo.createdAt)}
                     </p>
 
+                    {/* SIZE */}
                     <p className="mt-1 text-[11px] text-[#3B2E52]/35">
                       {photo.width && photo.height
                         ? `${photo.width} × ${photo.height}`
@@ -1068,15 +1011,13 @@ File akan dihapus dari Cloudinary dan tidak dapat dipulihkan melalui The Archive
                     </p>
 
                     {/* =========================
-                          ACTION BUTTONS
+                          ACTIONS
                       ========================== */}
                     <div className="mt-4 grid grid-cols-2 gap-2">
                       {/* DOWNLOAD */}
                       <button
                         type="button"
-                        onClick={() => {
-                          void handleDownload(photo);
-                        }}
+                        onClick={() => void handleDownload(photo)}
                         disabled={isPrinting}
                         className="flex items-center justify-center gap-1.5 rounded-lg border border-[#D8C8F0] bg-white px-3 py-2.5 text-xs font-medium text-[#6D4FC2] transition hover:bg-[#F5F1FA] disabled:cursor-not-allowed disabled:opacity-40"
                       >
@@ -1087,9 +1028,7 @@ File akan dihapus dari Cloudinary dan tidak dapat dipulihkan melalui The Archive
                       {/* PRINT */}
                       <button
                         type="button"
-                        onClick={() => {
-                          void handlePrintPhoto(photo);
-                        }}
+                        onClick={() => void handlePrintPhoto(photo)}
                         disabled={
                           Boolean(printingPublicId) || !printerSupported
                         }
@@ -1107,9 +1046,7 @@ File akan dihapus dari Cloudinary dan tidak dapat dipulihkan melalui The Archive
                       {/* DELETE */}
                       <button
                         type="button"
-                        onClick={() => {
-                          void handlePermanentDelete(photo);
-                        }}
+                        onClick={() => void handlePermanentDelete(photo)}
                         disabled={isDeleting || Boolean(printingPublicId)}
                         className="col-span-2 flex items-center justify-center gap-1.5 rounded-lg border border-red-200 px-3 py-2.5 text-xs font-medium text-red-500 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
                       >
@@ -1135,9 +1072,7 @@ File akan dihapus dari Cloudinary dan tidak dapat dipulihkan melalui The Archive
             <div className="mt-8 text-center">
               <button
                 type="button"
-                onClick={() => {
-                  void handleLoadMore();
-                }}
+                onClick={() => void handleLoadMore()}
                 disabled={loadingMore}
                 className="rounded-full border border-[#D8C8F0] bg-white/70 px-6 py-3 text-sm font-medium text-[#6D4FC2] transition hover:bg-[#E9D8FD]/55 disabled:cursor-not-allowed disabled:opacity-50"
               >
