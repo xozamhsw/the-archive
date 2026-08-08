@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 
 import cloudinary from "@/lib/cloudinary";
-import { verifyFirebaseIdToken } from "@/lib/utils";
+
+import { verifyAdminFirebaseIdToken } from "@/lib/utils";
 
 const ALLOWED_FOLDERS = {
   gallery: "the-archive/gallery",
+
   photobooth: "the-archive/photobooth",
 } as const;
 
@@ -16,7 +18,9 @@ function isAllowedFolder(folder: string): folder is UploadFolder {
 
 export async function GET(request: Request) {
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+
   const apiKey = process.env.CLOUDINARY_API_KEY;
+
   const apiSecret = process.env.CLOUDINARY_API_SECRET;
 
   if (!cloudName || !apiKey || !apiSecret) {
@@ -46,27 +50,48 @@ export async function GET(request: Request) {
   }
 
   /**
-   * Memory Gallery hanya boleh meminta signature
-   * melalui sesi Firebase admin yang valid.
+   * =========================================================
+   * GALLERY
+   * =========================================================
    *
-   * Photobooth tetap public karena dipakai pengunjung.
+   * Gallery merupakan CMS admin.
+   *
+   * Signed upload hanya diberikan kepada admin yang valid.
    */
   if (folder === ALLOWED_FOLDERS.gallery) {
-    const user = await verifyFirebaseIdToken(
+    const admin = await verifyAdminFirebaseIdToken(
       request.headers.get("authorization"),
     );
 
-    if (!user) {
+    if (!admin) {
       return NextResponse.json(
         {
-          message: "Sesi admin tidak valid atau sudah berakhir.",
+          message: "Akses upload Gallery hanya untuk admin.",
         },
         {
-          status: 401,
+          status: 403,
         },
       );
     }
   }
+
+  /**
+   * =========================================================
+   * PHOTOBOOTH
+   * =========================================================
+   *
+   * Photobooth merupakan fitur public.
+   *
+   * Tidak membutuhkan:
+   *
+   * - Firebase Auth
+   * - Anonymous Auth
+   * - Firebase ID Token
+   * - Authorization header
+   *
+   * Folder tetap di-whitelist agar client tidak dapat meminta
+   * signed upload untuk folder arbitrary.
+   */
 
   const timestamp = Math.round(Date.now() / 1000);
 

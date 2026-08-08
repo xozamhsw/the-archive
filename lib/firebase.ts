@@ -20,10 +20,57 @@ const firebaseConfig = {
 
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
+/**
+ * Firestore digunakan oleh:
+ *
+ * - Public website
+ * - Admin website
+ *
+ * Hak akses sebenarnya ditentukan oleh
+ * Firestore Security Rules.
+ */
 export const db = getFirestore(app);
 
+/**
+ * Firebase Authentication hanya digunakan
+ * untuk area admin.
+ *
+ * Photobooth public TIDAK menggunakan auth.
+ */
 export const auth = getAuth(app);
 
+/**
+ * =========================================================
+ * TEMPORARY COMPATIBILITY
+ * =========================================================
+ *
+ * Ini hanya dipertahankan sementara karena Wall dan Capsule
+ * belum kita migrasikan pada tahap ini.
+ *
+ * Setelah Wall + Capsule selesai:
+ *
+ * - publicDb dihapus
+ * - publicAuth dihapus
+ * - ensurePublicUser dihapus
+ * - signInAnonymously dihapus
+ */
+export const publicDb = db;
+
+export const publicAuth = auth;
+
+/**
+ * =========================================================
+ * TEMPORARY LEGACY BRIDGE
+ * =========================================================
+ *
+ * Jangan gunakan helper ini untuk kode baru.
+ *
+ * Photobooth baru sudah TIDAK menggunakan helper ini.
+ *
+ * Helper hanya dipertahankan supaya Wall dan Capsule versi
+ * lama tidak langsung mengalami compile error sebelum
+ * tahap migrasi berikutnya.
+ */
 export async function ensurePublicUser(): Promise<User> {
   await auth.authStateReady();
 
@@ -36,6 +83,17 @@ export async function ensurePublicUser(): Promise<User> {
   return credential.user;
 }
 
+/**
+ * =========================================================
+ * ADMIN VERIFICATION
+ * =========================================================
+ *
+ * Login Firebase saja belum cukup.
+ *
+ * UID user tetap diverifikasi melalui:
+ *
+ * /api/admin/verify
+ */
 export async function verifyAdminSession(user: User): Promise<boolean> {
   if (user.isAnonymous) {
     return false;

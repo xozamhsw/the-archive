@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
@@ -102,15 +101,10 @@ const TEMPLATES: Template[] = [
 ];
 
 const PHOTO_COUNT = 4;
-
 const COUNTDOWN_START = 3;
-
 const MAX_CAPTURE_WIDTH = 960;
-
 const CAPTURE_QUALITY = 0.88;
-
 const STRIP_WIDTH = 600;
-
 const STRIP_HEIGHT = 1800;
 
 type Stage = "select-template" | "camera" | "countdown" | "review" | "done";
@@ -147,61 +141,38 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     const image = new window.Image();
 
     image.onload = () => resolve(image);
-
     image.onerror = () => reject(new Error("Gagal membaca hasil foto."));
-
     image.src = src;
   });
 }
 
 export default function PhotoboothPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
-
   const captureCanvasRef = useRef<HTMLCanvasElement>(null);
-
   const stripCanvasRef = useRef<HTMLCanvasElement>(null);
-
   const streamRef = useRef<MediaStream | null>(null);
-
   const photoUrlsRef = useRef<string[]>([]);
-
   const stripUrlRef = useRef<string | null>(null);
-
   const sequenceRunningRef = useRef(false);
-
   const sequenceCancelledRef = useRef(false);
-
   const mountedRef = useRef(true);
 
   const [stage, setStage] = useState<Stage>("select-template");
-
   const [template, setTemplate] = useState<Template>(TEMPLATES[0]);
-
   const [photos, setPhotos] = useState<string[]>([]);
-
   const [countdown, setCountdown] = useState(COUNTDOWN_START);
-
   const [flash, setFlash] = useState(false);
-
   const [cameraReady, setCameraReady] = useState(false);
-
   const [cameraStarting, setCameraStarting] = useState(false);
-
   const [stripBlob, setStripBlob] = useState<Blob | null>(null);
-
   const [stripPreviewUrl, setStripPreviewUrl] = useState<string | null>(null);
-
   const [error, setError] = useState<string | null>(null);
-
   const [uploading, setUploading] = useState(false);
-
   const [deleting, setDeleting] = useState(false);
-
   const [uploadedId, setUploadedId] = useState<string | null>(null);
 
   const stopCamera = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
-
     streamRef.current = null;
 
     if (videoRef.current) {
@@ -213,27 +184,21 @@ export default function PhotoboothPage() {
 
   const revokePhotoUrls = useCallback(() => {
     photoUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
-
     photoUrlsRef.current = [];
   }, []);
 
   const revokeStripUrl = useCallback(() => {
     if (stripUrlRef.current) {
       URL.revokeObjectURL(stripUrlRef.current);
-
       stripUrlRef.current = null;
     }
   }, []);
 
   const clearLocalMedia = useCallback(() => {
     revokePhotoUrls();
-
     revokeStripUrl();
-
     setPhotos([]);
-
     setStripBlob(null);
-
     setStripPreviewUrl(null);
   }, [revokePhotoUrls, revokeStripUrl]);
 
@@ -242,22 +207,17 @@ export default function PhotoboothPage() {
 
     return () => {
       mountedRef.current = false;
-
       sequenceCancelledRef.current = true;
-
       sequenceRunningRef.current = false;
 
       streamRef.current?.getTracks().forEach((track) => track.stop());
-
       streamRef.current = null;
 
       photoUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
-
       photoUrlsRef.current = [];
 
       if (stripUrlRef.current) {
         URL.revokeObjectURL(stripUrlRef.current);
-
         stripUrlRef.current = null;
       }
     };
@@ -270,27 +230,21 @@ export default function PhotoboothPage() {
       streamRef.current
     ) {
       videoRef.current.srcObject = streamRef.current;
-
       videoRef.current.play().catch(() => undefined);
     }
   }, [stage]);
 
   async function startCamera() {
     setError(null);
-
     setCameraStarting(true);
-
     setCameraReady(false);
-
     sequenceCancelledRef.current = false;
 
     stopCamera();
 
     if (!navigator.mediaDevices?.getUserMedia) {
       setError("Browser ini tidak mendukung akses kamera.");
-
       setCameraStarting(false);
-
       return;
     }
 
@@ -298,27 +252,22 @@ export default function PhotoboothPage() {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: "user",
-
           width: {
             ideal: 1280,
           },
-
           height: {
             ideal: 960,
           },
         },
-
         audio: false,
       });
 
       if (!mountedRef.current) {
         stream.getTracks().forEach((track) => track.stop());
-
         return;
       }
 
       streamRef.current = stream;
-
       setStage("camera");
     } catch {
       setError("Tidak bisa mengakses kamera. Pastikan izin kamera diberikan.");
@@ -331,7 +280,6 @@ export default function PhotoboothPage() {
 
   async function captureFrame(): Promise<string> {
     const video = videoRef.current;
-
     const canvas = captureCanvasRef.current;
 
     if (
@@ -346,7 +294,6 @@ export default function PhotoboothPage() {
     const scale = Math.min(1, MAX_CAPTURE_WIDTH / video.videoWidth);
 
     canvas.width = Math.round(video.videoWidth * scale);
-
     canvas.height = Math.round(video.videoHeight * scale);
 
     const context = canvas.getContext("2d");
@@ -356,23 +303,17 @@ export default function PhotoboothPage() {
     }
 
     context.save();
-
     context.translate(canvas.width, 0);
-
     context.scale(-1, 1);
-
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
-
     context.restore();
 
     const blob = await canvasToBlob(canvas, "image/jpeg", CAPTURE_QUALITY);
 
     canvas.width = 1;
-
     canvas.height = 1;
 
     const objectUrl = URL.createObjectURL(blob);
-
     photoUrlsRef.current.push(objectUrl);
 
     return objectUrl;
@@ -393,21 +334,15 @@ export default function PhotoboothPage() {
       }
 
       const audioContext = new AudioContextClass();
-
       const oscillator = audioContext.createOscillator();
-
       const gainNode = audioContext.createGain();
 
       oscillator.connect(gainNode);
-
       gainNode.connect(audioContext.destination);
 
       oscillator.type = "square";
-
       oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
-
       gainNode.gain.setValueAtTime(0.25, audioContext.currentTime);
-
       gainNode.gain.exponentialRampToValueAtTime(
         0.01,
         audioContext.currentTime + 0.15,
@@ -418,7 +353,6 @@ export default function PhotoboothPage() {
       };
 
       oscillator.start(audioContext.currentTime);
-
       oscillator.stop(audioContext.currentTime + 0.15);
     } catch {
       // Abaikan jika browser tidak mendukung audio sintetis.
@@ -427,21 +361,15 @@ export default function PhotoboothPage() {
 
   const cancelCaptureSession = useCallback(() => {
     sequenceCancelledRef.current = true;
-
     sequenceRunningRef.current = false;
 
     stopCamera();
-
     clearLocalMedia();
 
     setCountdown(COUNTDOWN_START);
-
     setFlash(false);
-
     setUploadedId(null);
-
     setError(null);
-
     setStage("select-template");
   }, [clearLocalMedia, stopCamera]);
 
@@ -451,11 +379,9 @@ export default function PhotoboothPage() {
     }
 
     sequenceRunningRef.current = true;
-
     sequenceCancelledRef.current = false;
 
     setError(null);
-
     setStage("countdown");
 
     const captured: string[] = [];
@@ -468,7 +394,6 @@ export default function PhotoboothPage() {
           }
 
           setCountdown(current);
-
           await delay(1000);
         }
 
@@ -477,17 +402,13 @@ export default function PhotoboothPage() {
         }
 
         setFlash(true);
-
         playShutterSound();
-
         await delay(120);
 
         const photoUrl = await captureFrame();
 
         setFlash(false);
-
         captured.push(photoUrl);
-
         setPhotos([...captured]);
 
         if (shot < PHOTO_COUNT - 1) {
@@ -497,14 +418,11 @@ export default function PhotoboothPage() {
 
       if (!sequenceCancelledRef.current && captured.length === PHOTO_COUNT) {
         stopCamera();
-
         setStage("review");
       }
     } catch (captureError) {
       stopCamera();
-
       setStage("select-template");
-
       clearLocalMedia();
 
       setError(
@@ -514,7 +432,6 @@ export default function PhotoboothPage() {
       );
     } finally {
       sequenceRunningRef.current = false;
-
       setFlash(false);
     }
   }, [cameraReady, clearLocalMedia, stopCamera]);
@@ -541,7 +458,6 @@ export default function PhotoboothPage() {
         }
 
         canvas.width = STRIP_WIDTH;
-
         canvas.height = STRIP_HEIGHT;
 
         const context = canvas.getContext("2d");
@@ -551,27 +467,18 @@ export default function PhotoboothPage() {
         }
 
         context.fillStyle = template.bg;
-
         context.fillRect(0, 0, STRIP_WIDTH, STRIP_HEIGHT);
 
         context.fillStyle = template.textColor;
-
         context.font = "700 34px sans-serif";
-
         context.textAlign = "center";
-
         context.fillText("THE ARCHIVE", STRIP_WIDTH / 2, 70);
 
         const margin = 30;
-
         const headerHeight = 110;
-
         const footerHeight = 90;
-
         const gap = 18;
-
         const slotWidth = STRIP_WIDTH - margin * 2;
-
         const slotHeight =
           (STRIP_HEIGHT -
             headerHeight -
@@ -583,39 +490,28 @@ export default function PhotoboothPage() {
           const y = headerHeight + index * (slotHeight + gap);
 
           context.save();
-
           context.strokeStyle = template.accent;
-
           context.lineWidth = 4;
-
           context.strokeRect(margin, y, slotWidth, slotHeight);
 
           const imageScale = Math.max(
             slotWidth / image.width,
-
             slotHeight / image.height,
           );
 
           const sourceWidth = slotWidth / imageScale;
-
           const sourceHeight = slotHeight / imageScale;
-
           const sourceX = (image.width - sourceWidth) / 2;
-
           const sourceY = (image.height - sourceHeight) / 2;
 
           context.drawImage(
             image,
-
             sourceX,
             sourceY,
-
             sourceWidth,
             sourceHeight,
-
             margin,
             y,
-
             slotWidth,
             slotHeight,
           );
@@ -624,27 +520,21 @@ export default function PhotoboothPage() {
         });
 
         context.fillStyle = template.textColor;
-
         context.font = "20px sans-serif";
-
         context.textAlign = "center";
-
         context.fillText(
           new Date().toLocaleDateString("id-ID", {
             day: "numeric",
             month: "long",
             year: "numeric",
           }),
-
           STRIP_WIDTH / 2,
-
           STRIP_HEIGHT - 35,
         );
 
         const blob = await canvasToBlob(canvas, "image/jpeg", 0.92);
 
         canvas.width = 1;
-
         canvas.height = 1;
 
         if (cancelled) {
@@ -652,15 +542,12 @@ export default function PhotoboothPage() {
         }
 
         revokePhotoUrls();
-
         revokeStripUrl();
 
         const previewUrl = URL.createObjectURL(blob);
-
         stripUrlRef.current = previewUrl;
 
         setStripBlob(blob);
-
         setStripPreviewUrl(previewUrl);
       } catch (composeError) {
         if (!cancelled) {
@@ -682,21 +569,15 @@ export default function PhotoboothPage() {
 
   function retakeAll() {
     sequenceCancelledRef.current = true;
-
     sequenceRunningRef.current = false;
 
     stopCamera();
-
     clearLocalMedia();
 
     setCountdown(COUNTDOWN_START);
-
     setFlash(false);
-
     setUploadedId(null);
-
     setError(null);
-
     setStage("select-template");
   }
 
@@ -706,7 +587,6 @@ export default function PhotoboothPage() {
     }
 
     setUploading(true);
-
     setError(null);
 
     try {
@@ -731,20 +611,15 @@ export default function PhotoboothPage() {
       const formData = new FormData();
 
       formData.append("file", stripBlob, "the-archive-photobooth.jpg");
-
       formData.append("api_key", signatureData.apiKey);
-
       formData.append("timestamp", signatureData.timestamp.toString());
-
       formData.append("signature", signatureData.signature);
-
       formData.append("folder", signatureData.folder);
 
       const uploadResponse = await fetch(
         `https://api.cloudinary.com/v1_1/${signatureData.cloudName}/image/upload`,
         {
           method: "POST",
-
           body: formData,
         },
       );
@@ -761,24 +636,19 @@ export default function PhotoboothPage() {
       }
 
       /**
-       * Collection photobooth hanya mewakili
-       * foto yang masih tampil di sistem.
+       * Firestore collection "photobooth" hanya berfungsi sebagai
+       * daftar foto yang masih tampil di sistem/Monitoring Photo.
        *
-       * File Cloudinary tetap menjadi
-       * arsip pribadi admin.
+       * File Cloudinary tetap menjadi arsip foto privat admin.
        */
       const documentReference = await addDoc(collection(db, "photobooth"), {
         url: uploadData.secure_url,
-
         publicId: uploadData.public_id,
-
         template: template.id,
-
         createdAt: serverTimestamp(),
       });
 
       setUploadedId(documentReference.id);
-
       setStage("done");
     } catch (uploadError) {
       setError(
@@ -797,15 +667,11 @@ export default function PhotoboothPage() {
     }
 
     const anchor = document.createElement("a");
-
     anchor.href = stripPreviewUrl;
-
     anchor.download = `the-archive-photobooth-${Date.now()}.jpg`;
 
     document.body.appendChild(anchor);
-
     anchor.click();
-
     document.body.removeChild(anchor);
   }
 
@@ -823,18 +689,14 @@ export default function PhotoboothPage() {
     }
 
     setDeleting(true);
-
     setError(null);
 
     try {
       /**
-       * HANYA Firestore.
-       *
-       * File Cloudinary sengaja
-       * tidak dihapus.
+       * Sengaja hanya menghapus Firestore.
+       * File asli di Cloudinary TIDAK dihapus.
        */
       await deleteDoc(doc(db, "photobooth", uploadedId));
-
       retakeAll();
     } catch (deleteError) {
       setError(
@@ -928,7 +790,6 @@ export default function PhotoboothPage() {
                 muted
                 onLoadedMetadata={() => {
                   setCameraReady(true);
-
                   videoRef.current?.play().catch(() => undefined);
                 }}
                 className="h-full w-full scale-x-[-1] object-cover"
@@ -1074,7 +935,8 @@ export default function PhotoboothPage() {
             </div>
 
             <p className="mt-3 text-xs leading-5 text-[#3B2E52]/45">
-              Jika dihapus, foto tidak lagi tampil di The Archive.
+              Jika dihapus, foto tidak lagi tampil di The Archive. Satu salinan
+              tetap tersimpan di arsip pribadi sebagai kenangan.
             </p>
 
             <button
@@ -1089,7 +951,6 @@ export default function PhotoboothPage() {
         )}
 
         <canvas ref={captureCanvasRef} className="hidden" />
-
         <canvas ref={stripCanvasRef} className="hidden" />
 
         <div className="mt-10">
