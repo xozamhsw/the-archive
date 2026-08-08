@@ -1,9 +1,13 @@
 "use client";
 
-import { useRef } from "react";
-import { motion, useScroll, useTransform, useSpring } from "framer-motion";
+import { useEffect, useRef, useState } from "react";
+import { motion, useScroll, useSpring, useTransform } from "framer-motion";
 import Link from "next/link";
 import Image from "next/image";
+
+import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
+
+import { db } from "@/lib/firebase";
 
 interface MemoryItem {
   id: string;
@@ -13,42 +17,13 @@ interface MemoryItem {
   imageUrl: string;
 }
 
-const dummyMemories: MemoryItem[] = [
-  {
-    id: "1",
-    date: "2022",
-    title: "Awal Bertemu",
-    story:
-      "Momen pertama kali kita kenal — siapa sangka dari situ bisa jadi sahabat sampai sekarang.",
-    imageUrl: "https://picsum.photos/seed/memory1/600/400",
-  },
-  {
-    id: "2",
-    date: "2023",
-    title: "Nongkrong Bareng",
-    story:
-      "Cerita panjang, tawa, dan quality time yang selalu bikin hari jadi lebih ringan.",
-    imageUrl: "https://picsum.photos/seed/memory2/600/400",
-  },
-  {
-    id: "3",
-    date: "2024",
-    title: "Momen Seru",
-    story: "Salah satu kenangan paling berkesan yang nggak akan terlupakan.",
-    imageUrl: "https://picsum.photos/seed/memory3/600/400",
-  },
-  {
-    id: "4",
-    date: "2025",
-    title: "Terus Bertumbuh",
-    story:
-      "Meski sibuk masing-masing, kita tetap saling support dan menjaga komunikasi.",
-    imageUrl: "https://picsum.photos/seed/memory4/600/400",
-  },
-];
+interface MemoryCardProps {
+  memory: MemoryItem;
+  index: number;
+}
 
-function MemoryCard({ memory, index }: { memory: MemoryItem; index: number }) {
-  const ref = useRef<HTMLDivElement>(null);
+function MemoryCard({ memory, index }: MemoryCardProps) {
+  const ref = useRef<HTMLDivElement | null>(null);
 
   const { scrollYProgress } = useScroll({
     target: ref,
@@ -61,41 +36,71 @@ function MemoryCard({ memory, index }: { memory: MemoryItem; index: number }) {
   });
 
   const opacity = useTransform(smoothProgress, [0, 1], [0, 1]);
+
   const scale = useTransform(smoothProgress, [0, 1], [0.9, 1]);
+
   const y = useTransform(smoothProgress, [0, 1], [50, 0]);
+
   const imageScale = useTransform(smoothProgress, [0, 1], [1.15, 1]);
 
-  // Tilt natural, selang-seling kiri/kanan biar tidak kaku
   const tilt = index % 2 === 0 ? -1.5 : 1.5;
 
   return (
-    <motion.div ref={ref} style={{ opacity, scale, y }} className="relative">
-      <span className="absolute -left-[41px] top-1 w-4 h-4 rounded-full bg-[#A78BFA] border-4 border-[#F5F1FA]" />
+    <motion.div
+      ref={ref}
+      style={{
+        opacity,
+        scale,
+        y,
+      }}
+      className="relative"
+    >
+      {/* DATE */}
+      <p className="mb-2 text-sm font-medium text-[#6D4FC2]">{memory.date}</p>
 
-      <p className="text-[#6D4FC2] font-medium text-sm mb-2">{memory.date}</p>
-
+      {/* IMAGE */}
       <motion.div
-        style={{ rotate: tilt }}
-        whileHover={{ scale: 1.03, rotate: 0 }}
-        whileTap={{ scale: 0.98 }}
-        transition={{ type: "spring", stiffness: 200, damping: 15 }}
-        className="rounded-2xl overflow-hidden mb-3 shadow-md cursor-pointer"
+        style={{
+          rotate: tilt,
+        }}
+        whileHover={{
+          scale: 1.03,
+          rotate: 0,
+        }}
+        whileTap={{
+          scale: 0.98,
+        }}
+        transition={{
+          type: "spring",
+          stiffness: 200,
+          damping: 15,
+        }}
+        className="mb-3 cursor-pointer overflow-hidden rounded-2xl shadow-md"
       >
-        <motion.div style={{ scale: imageScale }}>
+        <motion.div
+          style={{
+            scale: imageScale,
+          }}
+        >
           <Image
             src={memory.imageUrl}
             alt={memory.title}
             width={600}
             height={400}
-            className="w-full h-auto object-cover"
+            loading={index === 0 ? "eager" : "lazy"}
+            sizes="(max-width: 768px) 100vw, 600px"
+            className="h-auto w-full"
           />
         </motion.div>
       </motion.div>
 
-      <h2 className="text-lg font-semibold text-[#3B2E52] mb-1">
+      {/* TITLE */}
+      <h2 className="mb-1 text-lg font-semibold text-[#3B2E52]">
         {memory.title}
       </h2>
-      <p className="text-[#3B2E52]/70 text-sm leading-relaxed max-w-md">
+
+      {/* STORY */}
+      <p className="max-w-md text-sm leading-relaxed text-[#3B2E52]/70">
         {memory.story}
       </p>
     </motion.div>
@@ -103,35 +108,124 @@ function MemoryCard({ memory, index }: { memory: MemoryItem; index: number }) {
 }
 
 export default function GalleryPage() {
+  const [memories, setMemories] = useState<MemoryItem[]>([]);
+
+  const [loading, setLoading] = useState(true);
+
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const galleryQuery = query(
+      collection(db, "gallery"),
+      orderBy("date", "asc"),
+    );
+
+    const unsubscribe = onSnapshot(
+      galleryQuery,
+      (snapshot) => {
+        const galleryItems = snapshot.docs.map((snapshotDoc) => ({
+          id: snapshotDoc.id,
+          ...snapshotDoc.data(),
+        })) as MemoryItem[];
+
+        setMemories(galleryItems);
+
+        setError(null);
+
+        setLoading(false);
+      },
+      (snapshotError) => {
+        console.error("Gallery snapshot error:", snapshotError);
+
+        setError("Gagal memuat kenangan. Silakan coba lagi.");
+
+        setLoading(false);
+      },
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
   return (
-    <main className="min-h-screen bg-[#F5F1FA] px-6 py-20">
-      <div className="max-w-2xl mx-auto">
+    <main className="min-h-screen bg-[#F5F1FA] px-6 py-16">
+      <div className="mx-auto max-w-2xl">
+        {/* =========================
+            HEADER
+        ========================== */}
         <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-          className="text-center mb-24"
+          initial={{
+            opacity: 0,
+            y: -10,
+          }}
+          animate={{
+            opacity: 1,
+            y: 0,
+          }}
+          transition={{
+            duration: 0.6,
+          }}
+          className="mb-24 text-center"
         >
-          <p className="text-[#6D4FC2]/60 text-sm tracking-widest mb-2">
+          <p className="mb-3 text-sm font-medium tracking-[0.2em] text-[#6D4FC2]/60">
             MEMORY GALLERY
           </p>
-          <h1 className="text-3xl font-bold text-[#3B2E52]">Kenangan Kita</h1>
+
+          <h1 className="text-3xl font-semibold text-[#3B2E52] sm:text-4xl">
+            Kenangan Kita
+          </h1>
         </motion.div>
 
-        <div className="relative border-l-2 border-[#D8C8F0] pl-8 space-y-32">
-          {dummyMemories.map((memory, index) => (
-            <MemoryCard key={memory.id} memory={memory} index={index} />
-          ))}
-        </div>
+        {/* =========================
+            LOADING
+        ========================== */}
+        {loading && (
+          <p className="text-center text-sm text-[#3B2E52]/50">Memuat...</p>
+        )}
 
-        <div className="text-center mt-24">
-          <Link
-            href="/photobooth"
-            className="inline-block bg-[#A78BFA] text-white px-8 py-3 rounded-full font-medium hover:bg-[#6D4FC2] transition"
-          >
-            Lanjut ke Photobooth
-          </Link>
-        </div>
+        {/* =========================
+            ERROR
+        ========================== */}
+        {!loading && error && (
+          <div className="mb-10 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-center text-sm text-red-600">
+            {error}
+          </div>
+        )}
+
+        {/* =========================
+            EMPTY STATE
+        ========================== */}
+        {!loading && !error && memories.length === 0 && (
+          <p className="text-center text-sm text-[#3B2E52]/50">
+            Belum ada kenangan yang ditambahkan.
+          </p>
+        )}
+
+        {/* =========================
+            MEMORY TIMELINE
+        ========================== */}
+        {!loading && !error && memories.length > 0 && (
+          <div className="relative space-y-32 border-l-2 border-[#D8C8F0] pl-8">
+            {memories.map((memory, index) => (
+              <MemoryCard key={memory.id} memory={memory} index={index} />
+            ))}
+          </div>
+        )}
+
+        {/* =========================
+            NEXT BUTTON
+        ========================== */}
+        {!loading && memories.length > 0 && (
+          <div className="mt-24 text-center">
+            <Link
+              href="/photobooth"
+              className="inline-block rounded-full bg-[#A78BFA] px-8 py-3 font-medium text-white transition hover:bg-[#6D4FC2]"
+            >
+              Lanjut ke Photobooth
+            </Link>
+          </div>
+        )}
       </div>
     </main>
   );

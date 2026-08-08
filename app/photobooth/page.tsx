@@ -1,15 +1,18 @@
 "use client";
 
-import { useRef, useState, useCallback, useEffect } from "react";
 import Link from "next/link";
-import { db } from "@/lib/firebase";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+
 import {
   addDoc,
   collection,
-  serverTimestamp,
   deleteDoc,
   doc,
+  serverTimestamp,
 } from "firebase/firestore";
+
+import { db } from "@/lib/firebase";
 
 interface Template {
   id: string;
@@ -17,6 +20,19 @@ interface Template {
   bg: string;
   accent: string;
   textColor: string;
+}
+
+interface PhotoboothSignatureResponse {
+  timestamp: number;
+  signature: string;
+  cloudName: string;
+  apiKey: string;
+  folder: string;
+}
+
+interface CloudinaryUploadResponse {
+  secure_url?: string;
+  public_id?: string;
 }
 
 const TEMPLATES: Template[] = [
@@ -85,44 +101,168 @@ const TEMPLATES: Template[] = [
   },
 ];
 
+const PHOTO_COUNT = 4;
+
+const COUNTDOWN_START = 3;
+
+const MAX_CAPTURE_WIDTH = 960;
+
+const CAPTURE_QUALITY = 0.88;
+
 const STRIP_WIDTH = 600;
+
 const STRIP_HEIGHT = 1800;
-const STORAGE_KEY = "the-archive-my-photobooth";
 
 type Stage = "select-template" | "camera" | "countdown" | "review" | "done";
 
+function delay(milliseconds: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, milliseconds);
+  });
+}
+
+function canvasToBlob(
+  canvas: HTMLCanvasElement,
+  type: string,
+  quality: number,
+): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (blob) {
+          resolve(blob);
+          return;
+        }
+
+        reject(new Error("Canvas gagal menghasilkan gambar."));
+      },
+      type,
+      quality,
+    );
+  });
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new window.Image();
+
+    image.onload = () => resolve(image);
+
+    image.onerror = () => reject(new Error("Gagal membaca hasil foto."));
+
+    image.src = src;
+  });
+}
+
 export default function PhotoboothPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
+
   const captureCanvasRef = useRef<HTMLCanvasElement>(null);
+
   const stripCanvasRef = useRef<HTMLCanvasElement>(null);
+
   const streamRef = useRef<MediaStream | null>(null);
 
+  const photoUrlsRef = useRef<string[]>([]);
+
+  const stripUrlRef = useRef<string | null>(null);
+
+  const sequenceRunningRef = useRef(false);
+
+  const sequenceCancelledRef = useRef(false);
+
+  const mountedRef = useRef(true);
+
   const [stage, setStage] = useState<Stage>("select-template");
+
   const [template, setTemplate] = useState<Template>(TEMPLATES[0]);
+
   const [photos, setPhotos] = useState<string[]>([]);
-  const [countdown, setCountdown] = useState(3);
+
+  const [countdown, setCountdown] = useState(COUNTDOWN_START);
+
   const [flash, setFlash] = useState(false);
-  const [stripDataUrl, setStripDataUrl] = useState<string | null>(null);
+
+  const [cameraReady, setCameraReady] = useState(false);
+
+  const [cameraStarting, setCameraStarting] = useState(false);
+
+  const [stripBlob, setStripBlob] = useState<Blob | null>(null);
+
+  const [stripPreviewUrl, setStripPreviewUrl] = useState<string | null>(null);
+
   const [error, setError] = useState<string | null>(null);
+
   const [uploading, setUploading] = useState(false);
+
+  const [deleting, setDeleting] = useState(false);
+
   const [uploadedId, setUploadedId] = useState<string | null>(null);
-  const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
 
-  async function startCamera() {
-    setError(null);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: 1280, height: 960 },
-        audio: false,
-      });
-      streamRef.current = stream;
-      setStage("camera");
-    } catch {
-      setError("Tidak bisa mengakses kamera. Pastikan izin kamera diberikan.");
+  const stopCamera = useCallback(() => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+
+    streamRef.current = null;
+
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
     }
-  }
 
-  // Pasang stream ke elemen video setelah video ter-mount di DOM
+    setCameraReady(false);
+  }, []);
+
+  const revokePhotoUrls = useCallback(() => {
+    photoUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+
+    photoUrlsRef.current = [];
+  }, []);
+
+  const revokeStripUrl = useCallback(() => {
+    if (stripUrlRef.current) {
+      URL.revokeObjectURL(stripUrlRef.current);
+
+      stripUrlRef.current = null;
+    }
+  }, []);
+
+  const clearLocalMedia = useCallback(() => {
+    revokePhotoUrls();
+
+    revokeStripUrl();
+
+    setPhotos([]);
+
+    setStripBlob(null);
+
+    setStripPreviewUrl(null);
+  }, [revokePhotoUrls, revokeStripUrl]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+
+      sequenceCancelledRef.current = true;
+
+      sequenceRunningRef.current = false;
+
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+
+      streamRef.current = null;
+
+      photoUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+
+      photoUrlsRef.current = [];
+
+      if (stripUrlRef.current) {
+        URL.revokeObjectURL(stripUrlRef.current);
+
+        stripUrlRef.current = null;
+      }
+    };
+  }, []);
+
   useEffect(() => {
     if (
       (stage === "camera" || stage === "countdown") &&
@@ -130,422 +270,832 @@ export default function PhotoboothPage() {
       streamRef.current
     ) {
       videoRef.current.srcObject = streamRef.current;
-      videoRef.current.play().catch(() => {
-        // beberapa browser butuh interaksi user dulu
-      });
+
+      videoRef.current.play().catch(() => undefined);
     }
   }, [stage]);
 
-  const stopCamera = useCallback(() => {
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
-  }, []);
+  async function startCamera() {
+    setError(null);
 
-  function captureFrame(): string {
-    const video = videoRef.current;
-    const canvas = captureCanvasRef.current;
-    if (!video || !canvas) return "";
+    setCameraStarting(true);
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return "";
+    setCameraReady(false);
 
-    // Mirror karena selfie
-    ctx.translate(canvas.width, 0);
-    ctx.scale(-1, 1);
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    sequenceCancelledRef.current = false;
 
-    return canvas.toDataURL("image/jpeg", 0.92);
+    stopCamera();
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError("Browser ini tidak mendukung akses kamera.");
+
+      setCameraStarting(false);
+
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user",
+
+          width: {
+            ideal: 1280,
+          },
+
+          height: {
+            ideal: 960,
+          },
+        },
+
+        audio: false,
+      });
+
+      if (!mountedRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+
+        return;
+      }
+
+      streamRef.current = stream;
+
+      setStage("camera");
+    } catch {
+      setError("Tidak bisa mengakses kamera. Pastikan izin kamera diberikan.");
+    } finally {
+      if (mountedRef.current) {
+        setCameraStarting(false);
+      }
+    }
   }
 
-  // Bunyi shutter sintetis
+  async function captureFrame(): Promise<string> {
+    const video = videoRef.current;
+
+    const canvas = captureCanvasRef.current;
+
+    if (
+      !video ||
+      !canvas ||
+      video.videoWidth === 0 ||
+      video.videoHeight === 0
+    ) {
+      throw new Error("Kamera belum siap mengambil foto.");
+    }
+
+    const scale = Math.min(1, MAX_CAPTURE_WIDTH / video.videoWidth);
+
+    canvas.width = Math.round(video.videoWidth * scale);
+
+    canvas.height = Math.round(video.videoHeight * scale);
+
+    const context = canvas.getContext("2d");
+
+    if (!context) {
+      throw new Error("Browser gagal menyiapkan canvas foto.");
+    }
+
+    context.save();
+
+    context.translate(canvas.width, 0);
+
+    context.scale(-1, 1);
+
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    context.restore();
+
+    const blob = await canvasToBlob(canvas, "image/jpeg", CAPTURE_QUALITY);
+
+    canvas.width = 1;
+
+    canvas.height = 1;
+
+    const objectUrl = URL.createObjectURL(blob);
+
+    photoUrlsRef.current.push(objectUrl);
+
+    return objectUrl;
+  }
+
   function playShutterSound() {
     try {
       const AudioContextClass =
         window.AudioContext ||
         (
-          window as Window &
-            typeof globalThis & {
-              webkitAudioContext?: typeof AudioContext;
-            }
+          window as Window & {
+            webkitAudioContext?: typeof AudioContext;
+          }
         ).webkitAudioContext;
 
-      if (!AudioContextClass) return;
+      if (!AudioContextClass) {
+        return;
+      }
 
-      const audioCtx = new AudioContextClass();
-      const oscillator = audioCtx.createOscillator();
-      const gainNode = audioCtx.createGain();
+      const audioContext = new AudioContextClass();
+
+      const oscillator = audioContext.createOscillator();
+
+      const gainNode = audioContext.createGain();
 
       oscillator.connect(gainNode);
-      gainNode.connect(audioCtx.destination);
+
+      gainNode.connect(audioContext.destination);
 
       oscillator.type = "square";
-      oscillator.frequency.setValueAtTime(800, audioCtx.currentTime);
-      gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+
+      oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+
+      gainNode.gain.setValueAtTime(0.25, audioContext.currentTime);
+
       gainNode.gain.exponentialRampToValueAtTime(
         0.01,
-        audioCtx.currentTime + 0.15,
+        audioContext.currentTime + 0.15,
       );
 
-      oscillator.start(audioCtx.currentTime);
-      oscillator.stop(audioCtx.currentTime + 0.15);
+      oscillator.onended = () => {
+        audioContext.close().catch(() => undefined);
+      };
+
+      oscillator.start(audioContext.currentTime);
+
+      oscillator.stop(audioContext.currentTime + 0.15);
     } catch {
-      // abaikan jika tidak support
+      // Abaikan jika browser tidak mendukung audio sintetis.
     }
   }
 
+  const cancelCaptureSession = useCallback(() => {
+    sequenceCancelledRef.current = true;
+
+    sequenceRunningRef.current = false;
+
+    stopCamera();
+
+    clearLocalMedia();
+
+    setCountdown(COUNTDOWN_START);
+
+    setFlash(false);
+
+    setUploadedId(null);
+
+    setError(null);
+
+    setStage("select-template");
+  }, [clearLocalMedia, stopCamera]);
+
   const startSequence = useCallback(async () => {
+    if (!cameraReady || sequenceRunningRef.current) {
+      return;
+    }
+
+    sequenceRunningRef.current = true;
+
+    sequenceCancelledRef.current = false;
+
+    setError(null);
+
     setStage("countdown");
+
     const captured: string[] = [];
 
-    for (let shot = 0; shot < 4; shot++) {
-      // Hitungan mundur 3, 2, 1
-      for (let c = 3; c > 0; c--) {
-        setCountdown(c);
-        await new Promise((r) => setTimeout(r, 1000));
+    try {
+      for (let shot = 0; shot < PHOTO_COUNT; shot += 1) {
+        for (let current = COUNTDOWN_START; current > 0; current -= 1) {
+          if (sequenceCancelledRef.current) {
+            return;
+          }
+
+          setCountdown(current);
+
+          await delay(1000);
+        }
+
+        if (sequenceCancelledRef.current) {
+          return;
+        }
+
+        setFlash(true);
+
+        playShutterSound();
+
+        await delay(120);
+
+        const photoUrl = await captureFrame();
+
+        setFlash(false);
+
+        captured.push(photoUrl);
+
+        setPhotos([...captured]);
+
+        if (shot < PHOTO_COUNT - 1) {
+          await delay(500);
+        }
       }
 
-      // Efek cekrek
-      setFlash(true);
-      playShutterSound();
-      await new Promise((r) => setTimeout(r, 150));
-      const photo = captureFrame();
+      if (!sequenceCancelledRef.current && captured.length === PHOTO_COUNT) {
+        stopCamera();
+
+        setStage("review");
+      }
+    } catch (captureError) {
+      stopCamera();
+
+      setStage("select-template");
+
+      clearLocalMedia();
+
+      setError(
+        captureError instanceof Error
+          ? captureError.message
+          : "Gagal mengambil foto. Silakan coba lagi.",
+      );
+    } finally {
+      sequenceRunningRef.current = false;
+
       setFlash(false);
+    }
+  }, [cameraReady, clearLocalMedia, stopCamera]);
 
-      captured.push(photo);
-      setPhotos([...captured]);
+  useEffect(() => {
+    if (stage !== "review" || photos.length !== PHOTO_COUNT) {
+      return;
+    }
 
-      // Jeda antar foto, kecuali setelah foto ke-4
-      if (shot < 3) {
-        await new Promise((r) => setTimeout(r, 600));
+    const canvas = stripCanvasRef.current;
+
+    if (!canvas) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function composeStrip() {
+      try {
+        const images = await Promise.all(photos.map((src) => loadImage(src)));
+
+        if (cancelled || !canvas) {
+          return;
+        }
+
+        canvas.width = STRIP_WIDTH;
+
+        canvas.height = STRIP_HEIGHT;
+
+        const context = canvas.getContext("2d");
+
+        if (!context) {
+          throw new Error("Browser gagal menyusun photo strip.");
+        }
+
+        context.fillStyle = template.bg;
+
+        context.fillRect(0, 0, STRIP_WIDTH, STRIP_HEIGHT);
+
+        context.fillStyle = template.textColor;
+
+        context.font = "700 34px sans-serif";
+
+        context.textAlign = "center";
+
+        context.fillText("THE ARCHIVE", STRIP_WIDTH / 2, 70);
+
+        const margin = 30;
+
+        const headerHeight = 110;
+
+        const footerHeight = 90;
+
+        const gap = 18;
+
+        const slotWidth = STRIP_WIDTH - margin * 2;
+
+        const slotHeight =
+          (STRIP_HEIGHT -
+            headerHeight -
+            footerHeight -
+            gap * (PHOTO_COUNT - 1)) /
+          PHOTO_COUNT;
+
+        images.forEach((image, index) => {
+          const y = headerHeight + index * (slotHeight + gap);
+
+          context.save();
+
+          context.strokeStyle = template.accent;
+
+          context.lineWidth = 4;
+
+          context.strokeRect(margin, y, slotWidth, slotHeight);
+
+          const imageScale = Math.max(
+            slotWidth / image.width,
+
+            slotHeight / image.height,
+          );
+
+          const sourceWidth = slotWidth / imageScale;
+
+          const sourceHeight = slotHeight / imageScale;
+
+          const sourceX = (image.width - sourceWidth) / 2;
+
+          const sourceY = (image.height - sourceHeight) / 2;
+
+          context.drawImage(
+            image,
+
+            sourceX,
+            sourceY,
+
+            sourceWidth,
+            sourceHeight,
+
+            margin,
+            y,
+
+            slotWidth,
+            slotHeight,
+          );
+
+          context.restore();
+        });
+
+        context.fillStyle = template.textColor;
+
+        context.font = "20px sans-serif";
+
+        context.textAlign = "center";
+
+        context.fillText(
+          new Date().toLocaleDateString("id-ID", {
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+          }),
+
+          STRIP_WIDTH / 2,
+
+          STRIP_HEIGHT - 35,
+        );
+
+        const blob = await canvasToBlob(canvas, "image/jpeg", 0.92);
+
+        canvas.width = 1;
+
+        canvas.height = 1;
+
+        if (cancelled) {
+          return;
+        }
+
+        revokePhotoUrls();
+
+        revokeStripUrl();
+
+        const previewUrl = URL.createObjectURL(blob);
+
+        stripUrlRef.current = previewUrl;
+
+        setStripBlob(blob);
+
+        setStripPreviewUrl(previewUrl);
+      } catch (composeError) {
+        if (!cancelled) {
+          setError(
+            composeError instanceof Error
+              ? composeError.message
+              : "Gagal menyusun photo strip.",
+          );
+        }
       }
     }
 
-    stopCamera();
-    setStage("review");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stopCamera]);
+    composeStrip();
 
-  // Susun foto jadi strip setelah 4 foto terkumpul
-  useEffect(() => {
-    if (stage !== "review" || photos.length !== 4) return;
-
-    const canvas = stripCanvasRef.current;
-    if (!canvas) return;
-    canvas.width = STRIP_WIDTH;
-    canvas.height = STRIP_HEIGHT;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    ctx.fillStyle = template.bg;
-    ctx.fillRect(0, 0, STRIP_WIDTH, STRIP_HEIGHT);
-
-    ctx.fillStyle = template.textColor;
-    ctx.font = "bold 34px sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText("THE ARCHIVE", STRIP_WIDTH / 2, 70);
-
-    const margin = 30;
-    const headerH = 110;
-    const footerH = 90;
-    const gap = 18;
-    const slotW = STRIP_WIDTH - margin * 2;
-    const slotH = (STRIP_HEIGHT - headerH - footerH - gap * 3) / 4;
-
-    let loaded = 0;
-    photos.forEach((src, i) => {
-      const img = new window.Image();
-      img.onload = () => {
-        const y = headerH + i * (slotH + gap);
-
-        ctx.save();
-        ctx.strokeStyle = template.accent;
-        ctx.lineWidth = 4;
-        ctx.strokeRect(margin, y, slotW, slotH);
-
-        const scale = Math.max(slotW / img.width, slotH / img.height);
-        const sw = slotW / scale;
-        const sh = slotH / scale;
-        const sx = (img.width - sw) / 2;
-        const sy = (img.height - sh) / 2;
-        ctx.drawImage(img, sx, sy, sw, sh, margin, y, slotW, slotH);
-        ctx.restore();
-
-        loaded++;
-        if (loaded === 4) {
-          ctx.fillStyle = template.textColor;
-          ctx.font = "20px sans-serif";
-          ctx.fillText(
-            new Date().toLocaleDateString("id-ID", {
-              day: "numeric",
-              month: "long",
-              year: "numeric",
-            }),
-            STRIP_WIDTH / 2,
-            STRIP_HEIGHT - 35,
-          );
-          setStripDataUrl(canvas.toDataURL("image/jpeg", 0.95));
-        }
-      };
-      img.src = src;
-    });
-  }, [stage, photos, template]);
+    return () => {
+      cancelled = true;
+    };
+  }, [photos, revokePhotoUrls, revokeStripUrl, stage, template]);
 
   function retakeAll() {
-    setPhotos([]);
-    setStripDataUrl(null);
+    sequenceCancelledRef.current = true;
+
+    sequenceRunningRef.current = false;
+
+    stopCamera();
+
+    clearLocalMedia();
+
+    setCountdown(COUNTDOWN_START);
+
+    setFlash(false);
+
     setUploadedId(null);
-    setUploadedUrl(null);
+
+    setError(null);
+
     setStage("select-template");
   }
 
   async function handleUpload() {
-    if (!stripDataUrl) return;
+    if (!stripBlob || uploading) {
+      return;
+    }
+
     setUploading(true);
+
     setError(null);
 
     try {
-      const sigRes = await fetch(
-        `/api/upload-signature?folder=the-archive/photobooth`,
+      const signatureResponse = await fetch(
+        "/api/upload-signature?folder=the-archive/photobooth",
+        {
+          cache: "no-store",
+        },
       );
-      if (!sigRes.ok) throw new Error("Gagal mengambil signature");
-      const { timestamp, signature, cloudName, apiKey } = await sigRes.json();
 
-      const blob = await (await fetch(stripDataUrl)).blob();
+      if (!signatureResponse.ok) {
+        const data = (await signatureResponse.json().catch(() => null)) as {
+          message?: string;
+        } | null;
+
+        throw new Error(data?.message || "Gagal menyiapkan upload Photobooth.");
+      }
+
+      const signatureData =
+        (await signatureResponse.json()) as PhotoboothSignatureResponse;
+
       const formData = new FormData();
-      formData.append("file", blob);
-      formData.append("api_key", apiKey);
-      formData.append("timestamp", timestamp.toString());
-      formData.append("signature", signature);
-      formData.append("folder", "the-archive/photobooth");
 
-      const uploadRes = await fetch(
-        `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
-        { method: "POST", body: formData },
+      formData.append("file", stripBlob, "the-archive-photobooth.jpg");
+
+      formData.append("api_key", signatureData.apiKey);
+
+      formData.append("timestamp", signatureData.timestamp.toString());
+
+      formData.append("signature", signatureData.signature);
+
+      formData.append("folder", signatureData.folder);
+
+      const uploadResponse = await fetch(
+        `https://api.cloudinary.com/v1_1/${signatureData.cloudName}/image/upload`,
+        {
+          method: "POST",
+
+          body: formData,
+        },
       );
-      if (!uploadRes.ok) throw new Error("Upload gagal");
-      const data = await uploadRes.json();
 
-      const docRef = await addDoc(collection(db, "photobooth"), {
-        url: data.secure_url,
-        publicId: data.public_id,
+      if (!uploadResponse.ok) {
+        throw new Error("Cloudinary gagal menyimpan hasil Photobooth.");
+      }
+
+      const uploadData =
+        (await uploadResponse.json()) as CloudinaryUploadResponse;
+
+      if (!uploadData.secure_url || !uploadData.public_id) {
+        throw new Error("Respons Cloudinary tidak lengkap.");
+      }
+
+      /**
+       * Collection photobooth hanya mewakili
+       * foto yang masih tampil di sistem.
+       *
+       * File Cloudinary tetap menjadi
+       * arsip pribadi admin.
+       */
+      const documentReference = await addDoc(collection(db, "photobooth"), {
+        url: uploadData.secure_url,
+
+        publicId: uploadData.public_id,
+
         template: template.id,
+
         createdAt: serverTimestamp(),
       });
 
-      const stored = localStorage.getItem(STORAGE_KEY);
-      const ids: string[] = stored ? JSON.parse(stored) : [];
-      ids.push(docRef.id);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(ids));
+      setUploadedId(documentReference.id);
 
-      setUploadedId(docRef.id);
-      setUploadedUrl(data.secure_url);
       setStage("done");
-    } catch {
-      setError("Gagal menyimpan hasil, coba lagi");
+    } catch (uploadError) {
+      setError(
+        uploadError instanceof Error
+          ? uploadError.message
+          : "Gagal menyimpan hasil. Silakan coba lagi.",
+      );
     } finally {
       setUploading(false);
     }
   }
 
   function handleDownload() {
-    // Gunakan stripDataUrl (data URL lokal) agar download selalu berhasil
-    const url = stripDataUrl;
-    if (!url) return;
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `the-archive-photobooth-${Date.now()}.jpg`;
-    a.click();
+    if (!stripPreviewUrl) {
+      return;
+    }
+
+    const anchor = document.createElement("a");
+
+    anchor.href = stripPreviewUrl;
+
+    anchor.download = `the-archive-photobooth-${Date.now()}.jpg`;
+
+    document.body.appendChild(anchor);
+
+    anchor.click();
+
+    document.body.removeChild(anchor);
   }
 
-  async function handleDeleteOwn() {
-    if (!uploadedId) return;
-    const confirmed = window.confirm("Hapus hasil foto ini?");
-    if (!confirmed) return;
+  async function handleRemoveFromArchiveView() {
+    if (!uploadedId || deleting) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Hapus foto dari tampilan The Archive? Foto akan hilang dari halaman monitoring, tetapi satu salinan tetap tersimpan di arsip pribadi.",
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeleting(true);
+
+    setError(null);
 
     try {
+      /**
+       * HANYA Firestore.
+       *
+       * File Cloudinary sengaja
+       * tidak dihapus.
+       */
       await deleteDoc(doc(db, "photobooth", uploadedId));
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const ids: string[] = JSON.parse(stored).filter(
-          (id: string) => id !== uploadedId,
-        );
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(ids));
-      }
+
       retakeAll();
-    } catch {
-      setError("Gagal menghapus, coba lagi");
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Gagal menghapus foto dari tampilan The Archive.",
+      );
+    } finally {
+      setDeleting(false);
     }
   }
 
   return (
-    <main className="min-h-screen bg-[#F5F1FA] px-6 py-16">
-      <div className="max-w-lg mx-auto text-center">
-        <p className="text-[#6D4FC2]/60 text-sm tracking-widest mb-2">
+    <main className="min-h-screen bg-[#F5F1FA] px-4 py-10 sm:px-6 sm:py-16">
+      <div className="mx-auto max-w-lg text-center">
+        <p className="mb-2 text-xs font-semibold tracking-[0.22em] text-[#6D4FC2]/55 sm:text-sm">
           VIRTUAL PHOTOBOOTH
         </p>
-        <h1 className="text-3xl font-bold text-[#3B2E52] mb-8">
+
+        <h1 className="mb-7 text-3xl font-bold text-[#3B2E52] sm:mb-8">
           Ambil Momenmu
         </h1>
 
-        {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
-
-        {stage === "select-template" && (
-          <div className="bg-white/60 rounded-2xl p-6 shadow-sm">
-            <p className="text-[#3B2E52] font-medium mb-4">Pilih Template</p>
-            <div className="grid grid-cols-3 gap-3 mb-6">
-              {TEMPLATES.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => setTemplate(t)}
-                  className={`rounded-xl p-3 border-2 transition ${
-                    template.id === t.id
-                      ? "border-[#A78BFA] scale-105"
-                      : "border-transparent"
-                  }`}
-                  style={{ background: t.bg }}
-                >
-                  <div
-                    className="w-full h-6 rounded mb-1"
-                    style={{ background: t.accent }}
-                  />
-                  <p className="text-xs" style={{ color: t.textColor }}>
-                    {t.name}
-                  </p>
-                </button>
-              ))}
-            </div>
-            <button
-              onClick={startCamera}
-              className="w-full bg-[#A78BFA] text-white py-3 rounded-xl font-medium hover:bg-[#6D4FC2] transition"
-            >
-              Nyalakan Kamera
-            </button>
+        {error && (
+          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-left text-sm text-red-600">
+            {error}
           </div>
         )}
 
+        {stage === "select-template" && (
+          <section className="rounded-2xl border border-[#D8C8F0]/30 bg-white/65 p-4 shadow-sm backdrop-blur-sm sm:p-6">
+            <p className="mb-4 font-medium text-[#3B2E52]">Pilih Template</p>
+
+            <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {TEMPLATES.map((item) => {
+                const selected = template.id === item.id;
+
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setTemplate(item)}
+                    className={`rounded-xl border-2 p-3 transition duration-200 ${
+                      selected
+                        ? "scale-[1.03] border-[#A78BFA] shadow-sm"
+                        : "border-transparent hover:scale-[1.02]"
+                    }`}
+                    style={{
+                      background: item.bg,
+                    }}
+                    aria-pressed={selected}
+                  >
+                    <div
+                      className="mb-2 h-6 w-full rounded-md"
+                      style={{
+                        background: item.accent,
+                      }}
+                    />
+
+                    <p
+                      className="text-xs font-medium"
+                      style={{
+                        color: item.textColor,
+                      }}
+                    >
+                      {item.name}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+
+            <button
+              type="button"
+              onClick={startCamera}
+              disabled={cameraStarting}
+              className="w-full rounded-xl bg-[#A78BFA] py-3 font-medium text-white transition hover:bg-[#6D4FC2] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {cameraStarting ? "Menyiapkan Kamera..." : "Nyalakan Kamera"}
+            </button>
+          </section>
+        )}
+
         {(stage === "camera" || stage === "countdown") && (
-          <div className="bg-white/60 rounded-2xl p-4 shadow-sm">
-            <div className="relative rounded-xl overflow-hidden bg-black aspect-[4/3]">
+          <section className="rounded-2xl border border-[#D8C8F0]/30 bg-white/65 p-3 shadow-sm backdrop-blur-sm sm:p-4">
+            <div className="relative aspect-[4/3] overflow-hidden rounded-xl bg-black">
               <video
                 ref={videoRef}
                 autoPlay
                 playsInline
                 muted
-                className="w-full h-full object-cover scale-x-[-1]"
+                onLoadedMetadata={() => {
+                  setCameraReady(true);
+
+                  videoRef.current?.play().catch(() => undefined);
+                }}
+                className="h-full w-full scale-x-[-1] object-cover"
               />
 
-              {/* Overlay saat countdown */}
-              {stage === "countdown" && (
+              {!cameraReady && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/55 px-6 text-sm text-white/80">
+                  Menyiapkan kamera...
+                </div>
+              )}
+
+              {stage === "countdown" && cameraReady && (
                 <>
-                  {/* Tampilkan angka jika countdown masih > 0 */}
                   {countdown > 0 && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-                      <span className="text-white text-7xl font-bold drop-shadow-lg">
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/25">
+                      <span className="text-7xl font-bold text-white drop-shadow-lg sm:text-8xl">
                         {countdown}
                       </span>
                     </div>
                   )}
 
-                  {/* Flash putih saat efek cekrek */}
                   {flash && (
                     <div
-                      className="absolute inset-0 bg-white transition-opacity duration-150"
-                      style={{ opacity: flash ? 1 : 0 }}
+                      className="absolute inset-0 bg-white"
+                      aria-hidden="true"
                     />
                   )}
                 </>
               )}
             </div>
 
-            <p className="text-[#3B2E52]/60 text-sm mt-3">
-              Foto ke-{photos.length + (stage === "countdown" ? 1 : 0)} / 4
-            </p>
+            <div className="mt-3 flex items-center justify-between gap-3 px-1 text-sm text-[#3B2E52]/55">
+              <span>
+                Foto {Math.min(photos.length + 1, PHOTO_COUNT)} dari{" "}
+                {PHOTO_COUNT}
+              </span>
+
+              <span>{template.name}</span>
+            </div>
 
             {stage === "camera" && (
+              <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={cancelCaptureSession}
+                  className="rounded-xl border border-[#D8C8F0] px-4 py-3 font-medium text-[#3B2E52] transition hover:bg-[#E9D8FD]/55"
+                >
+                  Batalkan
+                </button>
+
+                <button
+                  type="button"
+                  onClick={startSequence}
+                  disabled={!cameraReady}
+                  className="rounded-xl bg-[#A78BFA] px-4 py-3 font-medium text-white transition hover:bg-[#6D4FC2] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Mulai Ambil 4 Foto
+                </button>
+              </div>
+            )}
+
+            {stage === "countdown" && (
               <button
-                onClick={startSequence}
-                className="w-full mt-4 bg-[#A78BFA] text-white py-3 rounded-xl font-medium hover:bg-[#6D4FC2] transition"
+                type="button"
+                onClick={cancelCaptureSession}
+                className="mt-4 w-full rounded-xl border border-red-200 px-4 py-3 text-sm font-medium text-red-500 transition hover:bg-red-50"
               >
-                Mulai Ambil 4 Foto
+                Batalkan Sesi
               </button>
             )}
-          </div>
+          </section>
         )}
 
         {stage === "review" && (
-          <div className="bg-white/60 rounded-2xl p-4 shadow-sm">
-            {stripDataUrl ? (
+          <section className="rounded-2xl border border-[#D8C8F0]/30 bg-white/65 p-4 shadow-sm backdrop-blur-sm">
+            {stripPreviewUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={stripDataUrl}
-                alt="Photo strip"
-                className="w-full max-w-[220px] mx-auto rounded-lg shadow"
+                src={stripPreviewUrl}
+                alt="Hasil photo strip"
+                className="mx-auto w-full max-w-[220px] rounded-lg shadow"
               />
             ) : (
-              <p className="text-[#3B2E52]/60 py-10">Menyusun strip foto...</p>
+              <div className="py-12 text-sm text-[#3B2E52]/55">
+                Menyusun photo strip...
+              </div>
             )}
 
-            {stripDataUrl && (
-              <div className="flex gap-3 mt-4">
+            {stripPreviewUrl && (
+              <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <button
+                  type="button"
                   onClick={retakeAll}
-                  className="flex-1 border border-[#D8C8F0] text-[#3B2E52] py-3 rounded-xl hover:bg-[#E9D8FD] transition"
+                  disabled={uploading}
+                  className="rounded-xl border border-[#D8C8F0] py-3 font-medium text-[#3B2E52] transition hover:bg-[#E9D8FD] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Ambil Ulang
                 </button>
+
                 <button
+                  type="button"
                   onClick={handleUpload}
                   disabled={uploading}
-                  className="flex-1 bg-[#A78BFA] text-white py-3 rounded-xl font-medium hover:bg-[#6D4FC2] transition disabled:opacity-50"
+                  className="rounded-xl bg-[#A78BFA] py-3 font-medium text-white transition hover:bg-[#6D4FC2] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {uploading ? "Menyimpan..." : "Simpan"}
                 </button>
               </div>
             )}
-          </div>
+          </section>
         )}
 
-        {stage === "done" && stripDataUrl && (
-          <div className="bg-white/60 rounded-2xl p-4 shadow-sm">
-            <p className="text-green-600 font-medium mb-3">Tersimpan! 🎉</p>
+        {stage === "done" && stripPreviewUrl && (
+          <section className="rounded-2xl border border-[#D8C8F0]/30 bg-white/65 p-4 shadow-sm backdrop-blur-sm">
+            <div className="mb-4 rounded-xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
+              Tersimpan! 🎉
+            </div>
+
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={stripDataUrl}
-              alt="Photo strip"
-              className="w-full max-w-[220px] mx-auto rounded-lg shadow"
+              src={stripPreviewUrl}
+              alt="Hasil photo strip tersimpan"
+              className="mx-auto w-full max-w-[220px] rounded-lg shadow"
             />
-            <div className="flex gap-3 mt-4">
+
+            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
               <button
+                type="button"
                 onClick={handleDownload}
-                className="flex-1 bg-[#A78BFA] text-white py-3 rounded-xl font-medium hover:bg-[#6D4FC2] transition"
+                className="rounded-xl bg-[#A78BFA] py-3 font-medium text-white transition hover:bg-[#6D4FC2]"
               >
                 Download
               </button>
+
               <button
-                onClick={handleDeleteOwn}
-                className="flex-1 border border-red-300 text-red-500 py-3 rounded-xl hover:bg-red-50 transition"
+                type="button"
+                onClick={handleRemoveFromArchiveView}
+                disabled={deleting || !uploadedId}
+                className="rounded-xl border border-red-300 py-3 font-medium text-red-500 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Hapus
+                {deleting ? "Menghapus..." : "Hapus dari The Archive"}
               </button>
             </div>
+
+            <p className="mt-3 text-xs leading-5 text-[#3B2E52]/45">
+              Jika dihapus, foto tidak lagi tampil di The Archive.
+            </p>
+
             <button
+              type="button"
               onClick={retakeAll}
-              className="w-full mt-3 text-sm text-[#6D4FC2] underline"
+              disabled={deleting}
+              className="mt-4 text-sm font-medium text-[#6D4FC2] underline decoration-[#A78BFA]/40 underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Foto lagi
             </button>
-          </div>
+          </section>
         )}
 
         <canvas ref={captureCanvasRef} className="hidden" />
+
         <canvas ref={stripCanvasRef} className="hidden" />
 
         <div className="mt-10">
           <Link
             href="/wall"
-            className="inline-block bg-[#A78BFA] text-white px-8 py-3 rounded-full font-medium hover:bg-[#6D4FC2] transition"
+            className="inline-flex min-h-11 items-center justify-center rounded-full bg-[#A78BFA] px-7 py-3 text-sm font-medium text-white transition hover:bg-[#6D4FC2] sm:px-8"
           >
             Lanjut ke Friendship Wall
           </Link>
