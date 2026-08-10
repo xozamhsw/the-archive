@@ -214,24 +214,26 @@ const RECEIPT_WIDTH_58MM = 32;
 const PHOTO_WIDTH_58MM = 384;
 
 /**
- * PENTING:
+ * Ukuran 100 byte pada implementasi sebelumnya terlalu agresif untuk
+ * sebagian adapter/browser saat mengirim raster foto berukuran besar.
  *
- * Dari extension Rongta:
- *
- * mobile printer + paper < 62mm
- * menggunakan MTU/chunk 100 byte.
+ * Kita pakai chunk 20 byte sebagai nilai konservatif agar transfer lebih
+ * stabil di lebih banyak kombinasi browser + adapter + firmware printer.
  */
-const BLE_CHUNK_SIZE = 100;
+const BLE_CHUNK_SIZE = 20;
 
 /**
- * Extension Rongta mengirim mobile printer
- * tanpa artificial delay.
- *
- * Jangan beri delay 20ms seperti implementasi lama
- * karena dapat membuat motor thermal berhenti-jalan
- * dan menghasilkan horizontal banding.
+ * writeWithoutResponse tidak memberikan acknowledgement dari peripheral.
+ * Beri jeda kecil agar receive buffer printer tidak dibanjiri ribuan packet
+ * saat mencetak raster foto.
  */
-const BLE_CHUNK_DELAY = 0;
+const BLE_CHUNK_DELAY_WITHOUT_RESPONSE = 8;
+
+/**
+ * writeWithResponse sudah mempunyai flow-control dari GATT, jadi tidak perlu
+ * jeda tambahan yang besar.
+ */
+const BLE_CHUNK_DELAY_WITH_RESPONSE = 1;
 
 const ESC = 0x1b;
 
@@ -467,8 +469,7 @@ function canWriteCharacteristic(
 ) {
   return Boolean(
     characteristic.properties.writeWithoutResponse ||
-    characteristic.properties.write ||
-    characteristic.properties.writableAuxiliaries,
+    characteristic.properties.write,
   );
 }
 
@@ -788,9 +789,6 @@ async function writeCharacteristic(
 
   data: Uint8Array,
 ) {
-  /**
-   * Pastikan browser menerima ArrayBuffer biasa.
-   */
   const copy = new Uint8Array(data);
 
   const buffer = copy.buffer.slice(
@@ -799,29 +797,49 @@ async function writeCharacteristic(
   ) as ArrayBuffer;
 
   /**
-   * Rongta menggunakan
-   * writeValueWithoutResponse.
+   * PENTING:
+   *
+   * Jangan hanya mengecek apakah method tersedia.
+   *
+   * Pada object Web Bluetooth, method bisa tersedia walaupun characteristic
+   * tidak mengiklankan mode write tersebut. Implementasi sebelumnya selalu
+   * mencoba writeValueWithoutResponse lebih dulu dan dapat menghasilkan
+   * NotSupportedError/GATT operation failed.
    */
-  if (characteristic.writeValueWithoutResponse) {
-    await characteristic.writeValueWithoutResponse(buffer);
 
-    return;
-  }
-
-  if (characteristic.writeValueWithResponse) {
+  if (
+    characteristic.properties.write &&
+    characteristic.writeValueWithResponse
+  ) {
     await characteristic.writeValueWithResponse(buffer);
 
-    return;
+    return "with-response" as const;
   }
 
-  if (characteristic.writeValue) {
+  if (
+    characteristic.properties.writeWithoutResponse &&
+    characteristic.writeValueWithoutResponse
+  ) {
+    await characteristic.writeValueWithoutResponse(buffer);
+
+    return "without-response" as const;
+  }
+
+  /**
+   * Fallback untuk Chromium lama.
+   */
+  if (
+    (characteristic.properties.write ||
+      characteristic.properties.writeWithoutResponse) &&
+    characteristic.writeValue
+  ) {
     await characteristic.writeValue(buffer);
 
-    return;
+    return "legacy" as const;
   }
 
   throw new Error(
-    "Bluetooth characteristic RPP02N tidak mendukung operasi write.",
+    "Characteristic RPP02N ditemukan, tetapi tidak menyediakan mode write yang dapat digunakan browser.",
   );
 }
 
@@ -829,15 +847,6 @@ async function writeToPrinter(data: Uint8Array) {
   const characteristic = getWriteCharacteristic();
 
   try {
-    /**
-     * PENTING:
-     *
-     * Data ESC/POS tetap utuh secara logical.
-     *
-     * Yang dipecah di sini HANYA
-     * transport BLE menjadi packet
-     * 100 byte.
-     */
     for (let offset = 0; offset < data.length; offset += BLE_CHUNK_SIZE) {
       if (!activeServer?.connected) {
         throw new Error("Koneksi Bluetooth printer terputus.");
@@ -845,23 +854,34 @@ async function writeToPrinter(data: Uint8Array) {
 
       const chunk = data.slice(offset, offset + BLE_CHUNK_SIZE);
 
-      await writeCharacteristic(characteristic, chunk);
+      const writeMode = await writeCharacteristic(characteristic, chunk);
 
       /**
-       * Untuk RPP02N 58mm:
+       * Pacing hanya untuk menjaga receive buffer printer tetap stabil.
        *
-       * extension Rongta memakai
-       * delay 0.
+       * Foto 58 mm dapat berisi puluhan ribu byte, jadi tanpa pacing
+       * writeWithoutResponse bisa memenuhi buffer printer jauh lebih cepat
+       * daripada printer memproses raster.
        */
-      if (BLE_CHUNK_DELAY > 0) {
-        await delay(BLE_CHUNK_DELAY);
+      if (writeMode === "without-response") {
+        await delay(BLE_CHUNK_DELAY_WITHOUT_RESPONSE);
+      } else if (writeMode === "with-response") {
+        await delay(BLE_CHUNK_DELAY_WITH_RESPONSE);
       }
     }
   } catch (writeError) {
     if (!activeServer?.connected) {
       clearConnectionState();
 
-      throw new Error("Koneksi Bluetooth RPP02N terputus.");
+      throw new Error(
+        "Koneksi Bluetooth RPP02N terputus saat data sedang dikirim. Hubungkan ulang printer dan coba lagi.",
+      );
+    }
+
+    if (writeError instanceof DOMException) {
+      throw new Error(
+        `Bluetooth RPP02N gagal menerima data (${writeError.name}). Putuskan lalu hubungkan kembali printer, kemudian jalankan Tes Printer sebelum mencetak foto.`,
+      );
     }
 
     if (writeError instanceof Error) {
@@ -1277,10 +1297,11 @@ export async function printBluetoothPhoto(
   const printStream = concatBytes(...commands);
 
   /**
-   * SATU kali writeToPrinter().
+   * SATU stream ESC/POS utuh.
    *
-   * Tidak ada pause antar
-   * bagian raster gambar.
+   * writeToPrinter() menangani fragmentasi BLE + pacing transport.
+   * Raster tidak dipecah menjadi beberapa command GS v 0, jadi tidak
+   * menambahkan garis horizontal antar blok gambar.
    */
   await writeToPrinter(printStream);
 }

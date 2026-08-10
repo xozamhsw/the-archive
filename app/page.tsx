@@ -13,27 +13,19 @@ export default function HomePage() {
 
   useEffect(() => {
     /**
-     * Opening dibuat lebih cepat.
+     * Opening sekarang lebih ringkas:
      *
-     * 0ms
-     * ↓
-     * Loading
-     *
-     * 2100ms
-     * ↓
-     * Door
-     *
-     * 3600ms
-     * ↓
-     * Welcome
+     * 0.0s  → Opening
+     * 1.7s  → Door
+     * 3.3s  → Welcome
      */
     const loadingTimer = window.setTimeout(() => {
       setStage("door");
-    }, 2100);
+    }, 1700);
 
     const doorTimer = window.setTimeout(() => {
       setStage("welcome");
-    }, 3600);
+    }, 3300);
 
     return () => {
       window.clearTimeout(loadingTimer);
@@ -57,34 +49,12 @@ export default function HomePage() {
           <div className="absolute -bottom-40 -right-32 h-[400px] w-[400px] rounded-full bg-[#E7D9F5]/60 blur-[110px] sm:h-[560px] sm:w-[560px]" />
 
           <div className="absolute right-[8%] top-[8%] h-[180px] w-[180px] rounded-full bg-[#F4DDEC]/30 blur-[80px] sm:h-[260px] sm:w-[260px]" />
-
-          <div
-            className="absolute inset-0 opacity-[0.16]"
-            style={{
-              backgroundImage: `
-                linear-gradient(
-                  rgba(109, 79, 194, 0.045) 1px,
-                  transparent 1px
-                ),
-                linear-gradient(
-                  90deg,
-                  rgba(109, 79, 194, 0.045) 1px,
-                  transparent 1px
-                )
-              `,
-              backgroundSize: "64px 64px",
-              maskImage:
-                "radial-gradient(circle at center, black, transparent 82%)",
-              WebkitMaskImage:
-                "radial-gradient(circle at center, black, transparent 82%)",
-            }}
-          />
         </div>
 
         <AnimatePresence mode="wait">
           {/* =====================================================
               STAGE 1
-              LOADING
+              NEW OPENING
           ====================================================== */}
           {stage === "loading" && (
             <motion.section
@@ -99,194 +69,282 @@ export default function HomePage() {
                 opacity: 0,
               }}
               transition={{
-                duration: 0.28,
+                duration: 0.25,
               }}
-              className="absolute inset-0 z-30 flex items-center justify-center overflow-hidden px-5"
+              className="absolute inset-0 z-30 overflow-hidden"
             >
-              {/* AMBIENT */}
-              <div aria-hidden="true" className="absolute inset-0">
-                <div className="absolute left-1/2 top-1/2 h-[390px] w-[390px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#E1D5F2]/45 blur-[90px] sm:h-[520px] sm:w-[520px]" />
+              {/* BACKGROUND */}
+              <div className="absolute inset-0 bg-[#F7F3FA]" />
 
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_15%,rgba(247,243,250,0.26)_65%,rgba(247,243,250,0.78)_100%)]" />
-              </div>
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_45%,rgba(222,207,242,0.38),transparent_45%)]" />
 
-              <div className="relative z-10 flex w-full max-w-md flex-col items-center text-center">
-                {/* TITLE */}
-                <motion.div
-                  initial={{
-                    opacity: 0,
-                    y: -8,
-                  }}
-                  animate={{
-                    opacity: 1,
-                    y: 0,
-                  }}
-                  transition={{
-                    duration: 0.4,
-                  }}
-                  className="mb-8 sm:mb-10"
-                >
-                  <p className="text-[9px] font-semibold uppercase tracking-[0.34em] text-[#6D4FC2]/40 sm:text-[10px]">
-                    The Archive
-                  </p>
+              {/* FRAME */}
+              <motion.div
+                initial={{
+                  opacity: 0,
+                }}
+                animate={{
+                  opacity: 1,
+                }}
+                transition={{
+                  duration: 0.7,
+                }}
+                className="absolute inset-4 border border-[#6D4FC2]/[0.07] sm:inset-7 lg:inset-10"
+              />
 
-                  <p className="mt-2 text-[8px] uppercase tracking-[0.22em] text-[#3B2E52]/25 sm:text-[9px]">
-                    Private Memory Experience
-                  </p>
-                </motion.div>
+              {/* TOP LEFT */}
+              <motion.div
+                initial={{
+                  opacity: 0,
+                  y: -8,
+                }}
+                animate={{
+                  opacity: 1,
+                  y: 0,
+                }}
+                transition={{
+                  delay: 0.08,
+                  duration: 0.45,
+                }}
+                className="absolute left-7 top-8 sm:left-11 sm:top-11 lg:left-16 lg:top-14"
+              >
+                <p className="text-[8px] font-semibold uppercase tracking-[0.34em] text-[#6D4FC2]/45 sm:text-[9px]">
+                  The Archive
+                </p>
 
-                {/* MONOGRAM */}
-                <motion.div
-                  initial={{
-                    opacity: 0,
-                    scale: 0.94,
-                  }}
-                  animate={{
-                    opacity: 1,
-                    scale: 1,
-                  }}
-                  transition={{
-                    duration: 0.45,
-                  }}
-                  className="relative flex h-[138px] w-[138px] items-center justify-center sm:h-[160px] sm:w-[160px]"
-                >
-                  {/* OUTER ORBIT */}
+                <p className="mt-2 text-[7px] uppercase tracking-[0.2em] text-[#3B2E52]/25">
+                  Personal Memory
+                </p>
+              </motion.div>
+
+              {/* TOP RIGHT */}
+              <motion.div
+                initial={{
+                  opacity: 0,
+                  y: -8,
+                }}
+                animate={{
+                  opacity: 1,
+                  y: 0,
+                }}
+                transition={{
+                  delay: 0.12,
+                  duration: 0.45,
+                }}
+                className="absolute right-7 top-8 text-right sm:right-11 sm:top-11 lg:right-16 lg:top-14"
+              >
+                <p className="text-[7px] font-semibold uppercase tracking-[0.24em] text-[#6D4FC2]/30 sm:text-[8px]">
+                  Aulia Ayu Mahardika
+                </p>
+
+                <p className="mt-2 text-[7px] uppercase tracking-[0.18em] text-[#3B2E52]/20">
+                  Chapter 20
+                </p>
+              </motion.div>
+
+              {/* CENTER */}
+              <div className="absolute inset-0 flex items-center justify-center px-6">
+                <div className="relative flex w-full max-w-3xl flex-col items-center text-center">
+                  {/* SMALL INDEX */}
                   <motion.div
+                    initial={{
+                      opacity: 0,
+                      y: 10,
+                    }}
                     animate={{
-                      rotate: 360,
+                      opacity: 1,
+                      y: 0,
                     }}
                     transition={{
-                      duration: 8,
-                      repeat: Infinity,
-                      ease: "linear",
+                      delay: 0.1,
+                      duration: 0.45,
                     }}
-                    className="absolute inset-0 rounded-full border border-[#A78BFA]/18"
-                    style={{
-                      willChange: "transform",
-                    }}
+                    className="mb-5 flex items-center gap-3"
                   >
-                    <span className="absolute left-1/2 top-[-3px] h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-[#9877D2] shadow-[0_0_8px_rgba(152,119,210,0.45)]" />
+                    <span className="h-px w-6 bg-[#A78BFA]/35 sm:w-10" />
+
+                    <p className="text-[8px] font-semibold uppercase tracking-[0.3em] text-[#6D4FC2]/42 sm:text-[9px]">
+                      Archive No. 020
+                    </p>
+
+                    <span className="h-px w-6 bg-[#A78BFA]/35 sm:w-10" />
                   </motion.div>
 
-                  {/* SECOND ORBIT */}
+                  {/* GIANT 20 */}
                   <motion.div
+                    initial={{
+                      opacity: 0,
+                      scale: 0.94,
+                      y: 18,
+                    }}
                     animate={{
-                      rotate: -360,
+                      opacity: 1,
+                      scale: 1,
+                      y: 0,
                     }}
                     transition={{
-                      duration: 12,
-                      repeat: Infinity,
-                      ease: "linear",
+                      delay: 0.14,
+                      duration: 0.65,
+                      ease: DOOR_EASE,
                     }}
-                    className="absolute inset-[12px] rounded-full border border-dashed border-[#A78BFA]/17"
-                    style={{
-                      willChange: "transform",
-                    }}
-                  />
-
-                  {/* CENTER */}
-                  <div className="absolute inset-[27px] rounded-full border border-white/80 bg-white/55 shadow-[0_10px_30px_rgba(94,67,130,0.06)]" />
-
-                  <div className="relative flex flex-col items-center">
-                    <p className="text-xl font-semibold tracking-[-0.06em] text-[#60459D] sm:text-2xl">
-                      AAM
-                    </p>
-
-                    <span className="mt-1 h-px w-5 bg-[#A78BFA]/40" />
-
-                    <p className="mt-1.5 text-[6px] font-semibold uppercase tracking-[0.2em] text-[#6D4FC2]/35 sm:text-[7px]">
-                      Personal
-                    </p>
-                  </div>
-                </motion.div>
-
-                {/* COPY */}
-                <motion.div
-                  initial={{
-                    opacity: 0,
-                    y: 8,
-                  }}
-                  animate={{
-                    opacity: 1,
-                    y: 0,
-                  }}
-                  transition={{
-                    delay: 0.15,
-                    duration: 0.4,
-                  }}
-                  className="mt-8"
-                >
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.27em] text-[#60459D]/60 sm:text-xs">
-                    Mempersiapkan sesuatu...
-                  </p>
-
-                  <p className="mx-auto mt-3 max-w-xs text-[10px] leading-5 text-[#3B2E52]/32 sm:text-[11px]">
-                    Sedikit waktu. Arsip ini sedang dipersiapkan khusus untukmu.
-                  </p>
-                </motion.div>
-
-                {/* PROGRESS */}
-                <div className="mt-8 w-full max-w-[180px] sm:max-w-[210px]">
-                  <div className="h-px overflow-hidden bg-[#6D4FC2]/10">
-                    <motion.div
-                      initial={{
-                        scaleX: 0,
-                      }}
-                      animate={{
-                        scaleX: 1,
-                      }}
-                      transition={{
-                        duration: 1.7,
-                        ease: DOOR_EASE,
-                      }}
-                      style={{
-                        transformOrigin: "left center",
-                        willChange: "transform",
-                      }}
-                      className="h-full w-full bg-gradient-to-r from-[#D5C2EF] via-[#8E70C7] to-[#D5C2EF]"
-                    />
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-between">
-                    <span className="text-[7px] font-semibold uppercase tracking-[0.18em] text-[#3B2E52]/22">
-                      Loading
+                    className="relative"
+                  >
+                    <span className="select-none text-[clamp(6rem,20vw,13rem)] font-semibold leading-[0.78] tracking-[-0.09em] text-[#6D4FC2]/[0.075]">
+                      20
                     </span>
 
-                    <motion.span
-                      initial={{
-                        opacity: 0,
-                      }}
-                      animate={{
-                        opacity: 1,
-                      }}
-                      transition={{
-                        delay: 1.45,
-                      }}
-                      className="text-[7px] font-semibold uppercase tracking-[0.18em] text-[#6D4FC2]/35"
-                    >
-                      Ready
-                    </motion.span>
-                  </div>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.32em] text-[#6D4FC2]/40 sm:text-xs">
+                          For
+                        </p>
+
+                        <h1 className="mt-2 text-2xl font-semibold tracking-[-0.045em] text-[#3B2E52] sm:text-3xl md:text-4xl">
+                          Aulia
+                        </h1>
+                      </div>
+                    </div>
+                  </motion.div>
+
+                  {/* TEXT */}
+                  <motion.div
+                    initial={{
+                      opacity: 0,
+                      y: 12,
+                    }}
+                    animate={{
+                      opacity: 1,
+                      y: 0,
+                    }}
+                    transition={{
+                      delay: 0.28,
+                      duration: 0.45,
+                    }}
+                    className="mt-7 sm:mt-9"
+                  >
+                    <p className="text-[9px] font-semibold uppercase tracking-[0.28em] text-[#6D4FC2]/50 sm:text-[10px]">
+                      Sebuah ruang kecil untuk diingat.
+                    </p>
+
+                    <p className="mx-auto mt-3 max-w-sm text-[10px] leading-5 text-[#3B2E52]/35 sm:text-[11px]">
+                      Menyiapkan halaman pertama dari sesuatu yang dibuat khusus
+                      untukmu.
+                    </p>
+                  </motion.div>
+
+                  {/* PROGRESS LINE */}
+                  <motion.div
+                    initial={{
+                      opacity: 0,
+                    }}
+                    animate={{
+                      opacity: 1,
+                    }}
+                    transition={{
+                      delay: 0.3,
+                    }}
+                    className="mt-8 w-full max-w-[190px] sm:max-w-[240px]"
+                  >
+                    <div className="h-px w-full overflow-hidden bg-[#6D4FC2]/10">
+                      <motion.div
+                        initial={{
+                          scaleX: 0,
+                        }}
+                        animate={{
+                          scaleX: 1,
+                        }}
+                        transition={{
+                          duration: 1.25,
+                          delay: 0.18,
+                          ease: DOOR_EASE,
+                        }}
+                        style={{
+                          transformOrigin: "left center",
+                          willChange: "transform",
+                        }}
+                        className="h-full w-full bg-[#8F70C8]"
+                      />
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between">
+                      <span className="text-[6px] font-semibold uppercase tracking-[0.22em] text-[#3B2E52]/22">
+                        Opening
+                      </span>
+
+                      <motion.span
+                        initial={{
+                          opacity: 0,
+                        }}
+                        animate={{
+                          opacity: 1,
+                        }}
+                        transition={{
+                          delay: 1.15,
+                          duration: 0.25,
+                        }}
+                        className="text-[6px] font-semibold uppercase tracking-[0.22em] text-[#6D4FC2]/40"
+                      >
+                        Ready
+                      </motion.span>
+                    </div>
+                  </motion.div>
                 </div>
               </div>
+
+              {/* BOTTOM LEFT */}
+              <motion.div
+                initial={{
+                  opacity: 0,
+                }}
+                animate={{
+                  opacity: 1,
+                }}
+                transition={{
+                  delay: 0.45,
+                }}
+                className="absolute bottom-8 left-7 sm:bottom-11 sm:left-11 lg:bottom-14 lg:left-16"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="h-1 w-1 rounded-full bg-[#A78BFA]/50" />
+
+                  <span className="text-[6px] font-semibold uppercase tracking-[0.2em] text-[#3B2E52]/20">
+                    Made to be remembered
+                  </span>
+                </div>
+              </motion.div>
+
+              {/* BOTTOM RIGHT */}
+              <motion.p
+                initial={{
+                  opacity: 0,
+                }}
+                animate={{
+                  opacity: 1,
+                }}
+                transition={{
+                  delay: 0.45,
+                }}
+                className="absolute bottom-8 right-7 text-[6px] font-semibold uppercase tracking-[0.2em] text-[#3B2E52]/20 sm:bottom-11 sm:right-11 lg:bottom-14 lg:right-16"
+              >
+                00 / 05
+              </motion.p>
             </motion.section>
           )}
 
           {/* =====================================================
               STAGE 2
-              OPTIMIZED DOOR
+              DOOR
+              KONSEP TETAP
           ====================================================== */}
           {stage === "door" && (
             <section
               key="door"
               className="absolute inset-0 z-40 overflow-hidden bg-[#FAF8FC]"
             >
-              {/* =================================================
-                  BACK LIGHT
-                  Tidak lagi memakai blur besar.
-              ================================================== */}
+              {/* BACKGROUND BEHIND DOOR */}
               <div className="absolute inset-0 bg-gradient-to-br from-white via-[#FAF8FC] to-[#F0E9F7]" />
 
+              {/* CENTER LIGHT */}
               <motion.div
                 initial={{
                   scaleX: 0.03,
@@ -308,9 +366,7 @@ export default function HomePage() {
                 className="absolute inset-y-0 left-[45%] z-[2] w-[10%] bg-white"
               />
 
-              {/* =================================================
-                  LEFT DOOR
-              ================================================== */}
+              {/* LEFT DOOR */}
               <motion.div
                 initial={{
                   x: "0%",
@@ -329,10 +385,9 @@ export default function HomePage() {
                 }}
                 className="absolute inset-y-0 left-0 z-20 w-1/2 overflow-hidden border-r border-[#9172C0]/15 bg-gradient-to-br from-[#EFE7F7] via-[#E5D8F1] to-[#D7C5EA]"
               >
-                {/* SIMPLE INNER FRAME */}
                 <div className="absolute inset-[14px] border border-white/45 sm:inset-7 lg:inset-10" />
 
-                {/* TOP */}
+                {/* NAME */}
                 <div className="absolute left-6 top-7 sm:left-10 sm:top-10 lg:left-14 lg:top-12">
                   <p className="text-[7px] font-semibold uppercase tracking-[0.34em] text-[#6D4FC2]/34 sm:text-[9px]">
                     Aulia Ayu
@@ -364,9 +419,7 @@ export default function HomePage() {
                 </div>
               </motion.div>
 
-              {/* =================================================
-                  RIGHT DOOR
-              ================================================== */}
+              {/* RIGHT DOOR */}
               <motion.div
                 initial={{
                   x: "0%",
@@ -385,10 +438,9 @@ export default function HomePage() {
                 }}
                 className="absolute inset-y-0 right-0 z-20 w-1/2 overflow-hidden border-l border-[#9172C0]/15 bg-gradient-to-bl from-[#EFE7F7] via-[#E5D8F1] to-[#D7C5EA]"
               >
-                {/* SIMPLE INNER FRAME */}
                 <div className="absolute inset-[14px] border border-white/45 sm:inset-7 lg:inset-10" />
 
-                {/* TOP */}
+                {/* NAME */}
                 <div className="absolute right-6 top-7 text-right sm:right-10 sm:top-10 lg:right-14 lg:top-12">
                   <p className="text-[7px] font-semibold uppercase tracking-[0.34em] text-[#6D4FC2]/34 sm:text-[9px]">
                     Mahardika
@@ -424,9 +476,7 @@ export default function HomePage() {
                 </div>
               </motion.div>
 
-              {/* =================================================
-                  CENTER SEAL
-              ================================================== */}
+              {/* CENTER SEAL */}
               <motion.div
                 initial={{
                   opacity: 1,
@@ -497,7 +547,7 @@ export default function HomePage() {
               className="relative z-10 flex min-h-[100svh] items-center px-5 py-16 sm:px-8 sm:py-20 lg:px-12"
             >
               <div className="mx-auto w-full max-w-6xl">
-                {/* TOP META */}
+                {/* TOP */}
                 <motion.div
                   initial={{
                     opacity: 0,
@@ -526,7 +576,6 @@ export default function HomePage() {
                   </p>
                 </motion.div>
 
-                {/* HERO */}
                 <div className="grid items-center gap-10 lg:grid-cols-[1fr_0.7fr] lg:gap-16 xl:gap-24">
                   {/* LEFT */}
                   <div>
@@ -630,7 +679,7 @@ export default function HomePage() {
                     </motion.div>
                   </div>
 
-                  {/* RIGHT CARD */}
+                  {/* RIGHT */}
                   <motion.div
                     initial={{
                       opacity: 0,
@@ -662,7 +711,7 @@ export default function HomePage() {
                           </div>
 
                           <div className="flex h-11 w-11 items-center justify-center rounded-full border border-[#D8C8F0] bg-[#F7F3FA]">
-                            <span className="text-lg">✦</span>
+                            ✦
                           </div>
                         </div>
 

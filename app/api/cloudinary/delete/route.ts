@@ -2,14 +2,14 @@ import { NextResponse } from "next/server";
 
 import cloudinary from "@/lib/cloudinary";
 
-import { verifyFirebaseIdToken } from "@/lib/utils";
+import { verifyAdminFirebaseIdToken } from "@/lib/utils";
 
 const ALLOWED_PUBLIC_ID_PREFIXES = [
   "the-archive/gallery/",
   "the-archive/photobooth/",
 ] as const;
 
-function isAllowedPublicId(publicId: string): boolean {
+function isAllowedPublicId(publicId: string) {
   return ALLOWED_PUBLIC_ID_PREFIXES.some((prefix) =>
     publicId.startsWith(prefix),
   );
@@ -25,6 +25,7 @@ export async function DELETE(request: Request) {
   if (!cloudName || !apiKey || !apiSecret) {
     return NextResponse.json(
       {
+        success: false,
         message: "Konfigurasi Cloudinary belum lengkap.",
       },
       {
@@ -34,20 +35,24 @@ export async function DELETE(request: Request) {
   }
 
   /**
-   * Delete media hanya boleh dilakukan
-   * oleh admin yang memiliki sesi Firebase valid.
+   * Delete Cloudinary adalah operasi ADMIN.
+   *
+   * Jangan gunakan verifyFirebaseIdToken() generic,
+   * karena user Firebase biasa/anonymous tidak boleh
+   * mempunyai hak menghapus asset permanen.
    */
-  const user = await verifyFirebaseIdToken(
+  const admin = await verifyAdminFirebaseIdToken(
     request.headers.get("authorization"),
   );
 
-  if (!user) {
+  if (!admin) {
     return NextResponse.json(
       {
-        message: "Sesi admin tidak valid atau sudah berakhir.",
+        success: false,
+        message: "Sesi admin tidak valid atau tidak memiliki akses.",
       },
       {
-        status: 401,
+        status: 403,
       },
     );
   }
@@ -63,6 +68,7 @@ export async function DELETE(request: Request) {
   } catch {
     return NextResponse.json(
       {
+        success: false,
         message: "Payload request tidak valid.",
       },
       {
@@ -77,6 +83,7 @@ export async function DELETE(request: Request) {
   if (!publicId || !isAllowedPublicId(publicId)) {
     return NextResponse.json(
       {
+        success: false,
         message: "Public ID tidak diizinkan.",
       },
       {
@@ -86,22 +93,28 @@ export async function DELETE(request: Request) {
   }
 
   try {
+    /**
+     * Cloudinary destroy menggunakan public_id tanpa extension.
+     * Asset Photobooth kita merupakan resource_type image,
+     * delivery type upload.
+     */
     const result = await cloudinary.uploader.destroy(publicId, {
       resource_type: "image",
+      type: "upload",
       invalidate: true,
     });
 
-    /**
-     * "not found" tetap dianggap sukses.
-     *
-     * Misalnya Firestore masih menyimpan publicId,
-     * tetapi image Cloudinary sebelumnya sudah
-     * terhapus manual.
-     */
     if (result.result !== "ok" && result.result !== "not found") {
+      console.error("Cloudinary destroy rejected:", {
+        publicId,
+        result,
+      });
+
       return NextResponse.json(
         {
-          message: "Cloudinary gagal menghapus media.",
+          success: false,
+          message: "Cloudinary menolak penghapusan asset.",
+          result: result.result,
         },
         {
           status: 502,
@@ -109,16 +122,25 @@ export async function DELETE(request: Request) {
       );
     }
 
-    return NextResponse.json({
-      success: true,
-      result: result.result,
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        result: result.result,
+        publicId,
+      },
+      {
+        headers: {
+          "Cache-Control": "no-store, max-age=0",
+        },
+      },
+    );
   } catch (error) {
-    console.error("Cloudinary delete error:", error);
+    console.error("Cloudinary permanent delete error:", error);
 
     return NextResponse.json(
       {
-        message: "Terjadi kesalahan saat menghapus media.",
+        success: false,
+        message: "Terjadi kesalahan saat menghapus media dari Cloudinary.",
       },
       {
         status: 500,

@@ -1,4 +1,4 @@
-import { getApp, getApps, initializeApp } from "firebase/app";
+import { getApp, getApps, initializeApp, type FirebaseApp } from "firebase/app";
 
 import { getAuth, signInAnonymously, type User } from "firebase/auth";
 
@@ -18,89 +18,98 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-
-/**
- * Firestore digunakan oleh:
- *
- * - Public website
- * - Admin website
- *
- * Hak akses sebenarnya ditentukan oleh
- * Firestore Security Rules.
- */
-export const db = getFirestore(app);
-
-/**
- * Firebase Authentication hanya digunakan
- * untuk area admin.
- *
- * Photobooth public TIDAK menggunakan auth.
- */
-export const auth = getAuth(app);
-
 /**
  * =========================================================
- * TEMPORARY COMPATIBILITY
+ * ADMIN / DEFAULT FIREBASE APP
  * =========================================================
  *
- * Ini hanya dipertahankan sementara karena Wall dan Capsule
- * belum kita migrasikan pada tahap ini.
+ * Digunakan untuk:
  *
- * Setelah Wall + Capsule selesai:
- *
- * - publicDb dihapus
- * - publicAuth dihapus
- * - ensurePublicUser dihapus
- * - signInAnonymously dihapus
+ * - Admin authentication
+ * - Admin Firestore
+ * - Public Firestore operations yang memang no-auth
  */
-export const publicDb = db;
 
-export const publicAuth = auth;
+const defaultApp =
+  getApps().find((firebaseApp) => firebaseApp.name === "[DEFAULT]") ??
+  initializeApp(firebaseConfig);
+
+export const auth = getAuth(defaultApp);
+
+export const db = getFirestore(defaultApp);
 
 /**
  * =========================================================
- * TEMPORARY LEGACY BRIDGE
+ * TEMPORARY PUBLIC AUTH APP
  * =========================================================
  *
- * Jangan gunakan helper ini untuk kode baru.
+ * HANYA untuk Wall dan Capsule versi lama.
  *
- * Photobooth baru sudah TIDAK menggunakan helper ini.
+ * Ini sengaja dipisahkan dari admin auth supaya
+ * Anonymous Auth tidak pernah mengganti session admin.
  *
- * Helper hanya dipertahankan supaya Wall dan Capsule versi
- * lama tidak langsung mengalami compile error sebelum
- * tahap migrasi berikutnya.
+ * Setelah Wall + Capsule selesai dimigrasikan ke no-auth,
+ * seluruh bagian ini akan kita hapus.
  */
-export async function ensurePublicUser(): Promise<User> {
-  await auth.authStateReady();
 
-  if (auth.currentUser) {
-    return auth.currentUser;
+const PUBLIC_APP_NAME = "the-archive-public-legacy";
+
+function getPublicApp(): FirebaseApp {
+  const existingApp = getApps().find(
+    (firebaseApp) => firebaseApp.name === PUBLIC_APP_NAME,
+  );
+
+  if (existingApp) {
+    return existingApp;
   }
 
-  const credential = await signInAnonymously(auth);
+  return initializeApp(firebaseConfig, PUBLIC_APP_NAME);
+}
+
+const publicApp = getPublicApp();
+
+export const publicAuth = getAuth(publicApp);
+
+export const publicDb = getFirestore(publicApp);
+
+/**
+ * =========================================================
+ * TEMPORARY LEGACY PUBLIC USER
+ * =========================================================
+ *
+ * HANYA untuk:
+ *
+ * - Friendship Wall lama
+ * - Time Capsule lama
+ * - Feedback lama
+ *
+ * Jangan digunakan oleh Photobooth.
+ */
+export async function ensurePublicUser(): Promise<User> {
+  await publicAuth.authStateReady();
+
+  if (publicAuth.currentUser) {
+    return publicAuth.currentUser;
+  }
+
+  const credential = await signInAnonymously(publicAuth);
 
   return credential.user;
 }
 
 /**
  * =========================================================
- * ADMIN VERIFICATION
+ * ADMIN SESSION VERIFICATION
  * =========================================================
- *
- * Login Firebase saja belum cukup.
- *
- * UID user tetap diverifikasi melalui:
- *
- * /api/admin/verify
  */
+
 export async function verifyAdminSession(user: User): Promise<boolean> {
   if (user.isAnonymous) {
     return false;
   }
 
   try {
-    const idToken = await user.getIdToken();
+    const idToken = await user.getIdToken(true);
 
     const response = await fetch("/api/admin/verify", {
       method: "GET",
@@ -112,7 +121,17 @@ export async function verifyAdminSession(user: User): Promise<boolean> {
       cache: "no-store",
     });
 
-    return response.ok;
+    if (!response.ok) {
+      if (process.env.NODE_ENV === "development") {
+        const data = await response.json().catch(() => null);
+
+        console.error("Admin verification failed:", data);
+      }
+
+      return false;
+    }
+
+    return true;
   } catch (error) {
     console.error("Admin session verification error:", error);
 

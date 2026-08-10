@@ -27,6 +27,7 @@ import {
   isBluetoothPrinterSupported,
   printBluetoothPhoto,
   restoreBluetoothPrinter,
+  testBluetoothPrinter,
   type BluetoothPrinterInfo,
 } from "@/lib/bluetooth-thermal-printer";
 
@@ -177,6 +178,8 @@ export default function PhotoArchivePage() {
   const [connectingPrinter, setConnectingPrinter] = useState(false);
 
   const [disconnectingPrinter, setDisconnectingPrinter] = useState(false);
+
+  const [testingPrinter, setTestingPrinter] = useState(false);
 
   const [printingPublicId, setPrintingPublicId] = useState<string | null>(null);
 
@@ -430,6 +433,48 @@ export default function PhotoArchivePage() {
 
   /**
    * ============================================
+   * TEST PRINTER
+   * ============================================
+   */
+
+  async function handleTestPrinter() {
+    if (testingPrinter || printingPublicId) {
+      return;
+    }
+
+    clearPrinterMessages();
+
+    setTestingPrinter(true);
+
+    try {
+      if (!isBluetoothPrinterConnected()) {
+        await connectBluetoothPrinter();
+
+        updatePrinterInfo();
+      }
+
+      await testBluetoothPrinter();
+
+      updatePrinterInfo();
+
+      setPrinterMessage(
+        "Tes printer berhasil. Jika kertas test keluar, koneksi BLE sudah benar.",
+      );
+    } catch (testError) {
+      console.error("Thermal printer test error:", testError);
+
+      updatePrinterInfo();
+
+      setPrinterError(
+        testError instanceof Error ? testError.message : "Tes printer gagal.",
+      );
+    } finally {
+      setTestingPrinter(false);
+    }
+  }
+
+  /**
+   * ============================================
    * PRINT THERMAL PHOTO
    * ============================================
    */
@@ -655,13 +700,14 @@ File akan dihapus dari Cloudinary dan tidak dapat dipulihkan melalui The Archive
     setError(null);
 
     try {
-      const activeDocumentId = activeByPublicId.get(photo.publicId);
-
-      if (activeDocumentId) {
-        await deleteDoc(doc(db, "photobooth", activeDocumentId));
-      }
-
-      const idToken = await currentUser.getIdToken();
+      /**
+       * Hapus Cloudinary TERLEBIH DAHULU.
+       *
+       * Sebelumnya Firestore dihapus lebih dulu.
+       * Kalau API Cloudinary gagal, record monitoring sudah telanjur
+       * hilang walaupun file Cloudinary masih ada.
+       */
+      const idToken = await currentUser.getIdToken(true);
 
       const response = await fetch("/api/cloudinary/delete", {
         method: "DELETE",
@@ -675,20 +721,58 @@ File akan dihapus dari Cloudinary dan tidak dapat dipulihkan melalui The Archive
         body: JSON.stringify({
           publicId: photo.publicId,
         }),
+
+        cache: "no-store",
       });
 
-      if (!response.ok) {
-        const data = (await response.json().catch(() => null)) as {
-          message?: string;
-        } | null;
+      const data = (await response.json().catch(() => null)) as {
+        success?: boolean;
+        result?: string;
+        message?: string;
+      } | null;
 
-        throw new Error(data?.message || "Gagal menghapus foto permanen.");
+      if (!response.ok) {
+        throw new Error(
+          data?.message || "Gagal menghapus foto dari Cloudinary.",
+        );
+      }
+
+      /**
+       * Setelah Cloudinary berhasil / file memang sudah tidak ada,
+       * bersihkan record Photobooth aktif jika masih tersedia.
+       */
+      const activeDocumentId = activeByPublicId.get(photo.publicId);
+
+      if (activeDocumentId) {
+        try {
+          await deleteDoc(doc(db, "photobooth", activeDocumentId));
+        } catch (firestoreDeleteError) {
+          console.error(
+            "Cloudinary deleted but Firestore cleanup failed:",
+            firestoreDeleteError,
+          );
+
+          /**
+           * File permanen sudah berhasil dihapus.
+           * Tetap keluarkan dari archive UI, tetapi beritahu admin
+           * kalau record monitoring perlu dibersihkan.
+           */
+          setPhotos((currentPhotos) =>
+            currentPhotos.filter((item) => item.publicId !== photo.publicId),
+          );
+
+          throw new Error(
+            "File Cloudinary sudah berhasil dihapus, tetapi record Monitoring Photobooth gagal dibersihkan. Refresh halaman lalu hapus record monitoring yang tersisa.",
+          );
+        }
       }
 
       setPhotos((currentPhotos) =>
         currentPhotos.filter((item) => item.publicId !== photo.publicId),
       );
     } catch (deleteError) {
+      console.error("Permanent archive delete error:", deleteError);
+
       setError(
         deleteError instanceof Error
           ? deleteError.message
@@ -733,22 +817,47 @@ File akan dihapus dari Cloudinary dan tidak dapat dipulihkan melalui The Archive
             {printerSupported && !restoringPrinter && (
               <>
                 {printerConnected ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleDisconnectPrinter()}
-                    disabled={disconnectingPrinter || Boolean(printingPublicId)}
-                    className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {disconnectingPrinter ? (
-                      <Loader2 size={15} className="animate-spin" />
-                    ) : (
-                      <CheckCircle2 size={15} />
-                    )}
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void handleTestPrinter()}
+                      disabled={
+                        testingPrinter ||
+                        disconnectingPrinter ||
+                        Boolean(printingPublicId)
+                      }
+                      className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[#D8C8F0] bg-white/80 px-4 py-2.5 text-xs font-semibold text-[#6D4FC2] transition hover:bg-[#F5F1FA] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {testingPrinter ? (
+                        <Loader2 size={15} className="animate-spin" />
+                      ) : (
+                        <Printer size={15} />
+                      )}
 
-                    {printerInfo.deviceName || "RPP02N"}
+                      {testingPrinter ? "Mengetes..." : "Tes Printer"}
+                    </button>
 
-                    <Unplug size={14} />
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDisconnectPrinter()}
+                      disabled={
+                        disconnectingPrinter ||
+                        testingPrinter ||
+                        Boolean(printingPublicId)
+                      }
+                      className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {disconnectingPrinter ? (
+                        <Loader2 size={15} className="animate-spin" />
+                      ) : (
+                        <CheckCircle2 size={15} />
+                      )}
+
+                      {printerInfo.deviceName || "RPP02N"}
+
+                      <Unplug size={14} />
+                    </button>
+                  </>
                 ) : (
                   <button
                     type="button"
@@ -853,9 +962,11 @@ File akan dihapus dari Cloudinary dan tidak dapat dipulihkan melalui The Archive
           PRINT INFO
       ========================== */}
       <div className="mb-6 rounded-2xl border border-blue-200/70 bg-blue-50/70 px-4 py-4 text-xs leading-5 text-blue-800">
-        <span className="font-semibold">Cetak Thermal:</span> foto akan otomatis
-        diubah menjadi grayscale dan dithering hitam-putih, kemudian dicetak
-        penuh pada lebar 58mm RPP02N.
+        <span className="font-semibold">Cetak Thermal:</span> gunakan tombol
+        <span className="font-semibold"> Tes Printer</span> terlebih dahulu.
+        Setelah test berhasil, foto akan diubah menjadi grayscale + dithering
+        dan dikirim ke RPP02N dengan aliran BLE yang diperlambat agar buffer
+        printer tidak overload.
       </div>
 
       {/* =========================
@@ -1030,7 +1141,9 @@ File akan dihapus dari Cloudinary dan tidak dapat dipulihkan melalui The Archive
                         type="button"
                         onClick={() => void handlePrintPhoto(photo)}
                         disabled={
-                          Boolean(printingPublicId) || !printerSupported
+                          Boolean(printingPublicId) ||
+                          testingPrinter ||
+                          !printerSupported
                         }
                         className="flex items-center justify-center gap-1.5 rounded-lg bg-[#6D4FC2] px-3 py-2.5 text-xs font-semibold text-white transition hover:bg-[#5940A7] disabled:cursor-not-allowed disabled:bg-[#D8C8F0] disabled:text-[#6D4FC2]/50"
                       >
