@@ -4,7 +4,25 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { signOut } from "firebase/auth";
+import {
+  Archive,
+  Camera,
+  ChevronLeft,
+  ChevronRight,
+  Clock3,
+  Grid2X2,
+  Image as ImageIcon,
+  LogOut,
+  MessageCircle,
+  Menu,
+  X,
+} from "lucide-react";
+
 import { auth } from "@/lib/firebase";
+
+/* ============================================================
+   TYPES
+============================================================ */
 
 interface MenuItem {
   label: string;
@@ -17,156 +35,72 @@ interface SidebarProps {
   menuItems?: MenuItem[];
 }
 
+/* ============================================================
+   DEFAULT MENU
+============================================================ */
+
 const DEFAULT_MENU_ITEMS: MenuItem[] = [
   {
     label: "Dashboard",
-    icon: (
-      <svg
-        className="h-5 w-5"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"
-        />
-      </svg>
-    ),
+    icon: <Grid2X2 size={19} strokeWidth={1.8} />,
     href: "/admin",
   },
 
-  // =========================
-  // MEMORY GALLERY
-  // =========================
   {
     label: "Memory Gallery",
-    icon: (
-      <svg
-        className="h-5 w-5"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
-        />
-      </svg>
-    ),
+    icon: <ImageIcon size={19} strokeWidth={1.8} />,
     href: "/admin/manage-gallery",
   },
 
-  // =========================
-  // PHOTOBOOTH
-  // =========================
   {
     label: "Photobooth",
-    icon: (
-      <svg
-        className="h-5 w-5"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"
-        />
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"
-        />
-      </svg>
-    ),
+    icon: <Camera size={19} strokeWidth={1.8} />,
     href: "/admin/monitoring-photo",
   },
 
   {
     label: "Photo Archive",
-    icon: (
-      <svg
-        className="h-5 w-5"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M5 8h14M5 8a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v1a2 2 0 01-2 2M5 8v11a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
-        />
-      </svg>
-    ),
+    icon: <Archive size={19} strokeWidth={1.8} />,
     href: "/admin/photo-archive",
   },
 
-  // =========================
-  // WALL MESSAGES
-  // =========================
   {
     label: "Wall Messages",
-    icon: (
-      <svg
-        className="h-5 w-5"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
-        />
-      </svg>
-    ),
+    icon: <MessageCircle size={19} strokeWidth={1.8} />,
     href: "/admin/wall",
   },
 
-  // =========================
-  // TIME CAPSULE
-  // =========================
   {
     label: "Time Capsule",
-    icon: (
-      <svg
-        className="h-5 w-5"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-        />
-      </svg>
-    ),
+    icon: <Clock3 size={19} strokeWidth={1.8} />,
     href: "/admin/monitoring-capsule",
   },
 ];
+
+/* ============================================================
+   SIDEBAR
+============================================================ */
 
 export default function Sidebar({
   userEmail,
   menuItems = DEFAULT_MENU_ITEMS,
 }: SidebarProps) {
   const [isMobileOpen, setIsMobileOpen] = useState(false);
-  const [isDesktopCollapsed, setIsDesktopCollapsed] = useState(false);
+
+  /*
+   * Desktop sekarang default collapsed agar sesuai dengan
+   * komposisi sidebar pada halaman admin/The Archive.
+   */
+  const [isDesktopCollapsed, setIsDesktopCollapsed] = useState(true);
+
   const [isMobile, setIsMobile] = useState(false);
 
   const router = useRouter();
   const pathname = usePathname();
+
+  /* ==========================================================
+     RESPONSIVE
+  ========================================================== */
 
   useEffect(() => {
     function handleResize() {
@@ -188,11 +122,19 @@ export default function Sidebar({
     };
   }, []);
 
+  /* ==========================================================
+     MOBILE LINK
+  ========================================================== */
+
   const handleLinkClick = useCallback(() => {
     if (isMobile) {
       setIsMobileOpen(false);
     }
   }, [isMobile]);
+
+  /* ==========================================================
+     LOGOUT
+  ========================================================== */
 
   async function handleLogout() {
     try {
@@ -204,6 +146,10 @@ export default function Sidebar({
     }
   }
 
+  /* ==========================================================
+     ACTIVE ROUTE
+  ========================================================== */
+
   function isActiveRoute(href: string): boolean {
     if (href === "/admin") {
       return pathname === "/admin";
@@ -212,239 +158,538 @@ export default function Sidebar({
     return pathname.startsWith(href);
   }
 
+  /* ==========================================================
+     INITIAL
+  ========================================================== */
+
+  const userInitial = userEmail?.trim().charAt(0).toUpperCase() || "A";
+
+  /* ==========================================================
+     RENDER
+  ========================================================== */
+
   return (
     <>
-      {/* =========================
+      {/* ======================================================
           MOBILE MENU BUTTON
-      ========================== */}
+      ====================================================== */}
+
       <button
         type="button"
         onClick={() => setIsMobileOpen((previous) => !previous)}
-        className="fixed left-4 top-4 z-50 rounded-xl border border-[#D8C8F0]/40 bg-white/90 p-2.5 shadow-md backdrop-blur-md transition hover:shadow-lg lg:hidden"
+        className="
+          fixed
+          left-4
+          top-4
+          z-[60]
+          flex
+          h-10
+          w-10
+          items-center
+          justify-center
+          rounded-xl
+          border
+          border-white/[0.08]
+          bg-[#0D0E28]/90
+          text-[#C084FC]
+          shadow-[0_10px_30px_rgba(0,0,0,0.25)]
+          backdrop-blur-xl
+          transition
+          hover:border-[#C084FC]/20
+          hover:bg-[#141533]
+          hover:text-[#F3A9C7]
+          lg:hidden
+        "
         aria-label={isMobileOpen ? "Tutup sidebar" : "Buka sidebar"}
       >
-        <svg
-          className="h-5 w-5 text-[#6D4FC2]"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          {isMobileOpen ? (
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M6 18L18 6M6 6l12 12"
-            />
-          ) : (
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M4 6h16M4 12h16M4 18h16"
-            />
-          )}
-        </svg>
+        {isMobileOpen ? <X size={18} /> : <Menu size={18} />}
       </button>
 
-      {/* =========================
+      {/* ======================================================
           SIDEBAR
-      ========================== */}
+      ====================================================== */}
+
       <aside
         className={`
-          fixed inset-y-0 left-0 z-40 flex h-screen flex-col
-          border-r border-[#D8C8F0]/30
-          bg-white/90 backdrop-blur-xl
-          transition-all duration-300
+          fixed
+          inset-y-0
+          left-0
+          z-50
+          flex
+          h-screen
+          flex-col
+          border-r
+          border-white/[0.06]
+          bg-[#08091F]/95
+          shadow-[15px_0_50px_rgba(0,0,0,0.15)]
+          backdrop-blur-2xl
+          transition-all
+          duration-300
+          ease-out
           lg:sticky
+          lg:top-0
           ${
             isMobile
               ? isMobileOpen
-                ? "w-72 translate-x-0"
-                : "w-72 -translate-x-full"
+                ? "w-[250px] translate-x-0"
+                : "w-[250px] -translate-x-full"
               : isDesktopCollapsed
-                ? "w-20"
-                : "w-64"
+                ? "w-[68px]"
+                : "w-[250px]"
           }
         `}
       >
-        {/* =========================
-            HEADER
-        ========================== */}
-        <div className="flex-shrink-0 border-b border-[#D8C8F0]/30 p-5">
-          <div className="flex items-center justify-between gap-3">
-            <div
-              className={`
-                overflow-hidden transition-all duration-300
-                ${
-                  !isMobile && isDesktopCollapsed
-                    ? "w-0 opacity-0"
-                    : "w-auto opacity-100"
-                }
-              `}
-            >
-              <p className="mb-1 whitespace-nowrap text-[10px] font-semibold uppercase tracking-[0.2em] text-[#6D4FC2]/45">
-                Admin Workspace
-              </p>
+        {/* ====================================================
+            SIDEBAR HEADER
+        ==================================================== */}
 
-              <h2 className="whitespace-nowrap text-lg font-bold text-[#3B2E52]">
-                The Archive
-              </h2>
-            </div>
+        <div
+          className={`
+            flex
+            h-[72px]
+            flex-shrink-0
+            items-center
+            border-b
+            border-white/[0.05]
+            ${
+              !isMobile && isDesktopCollapsed
+                ? "justify-center px-2"
+                : "justify-between px-3"
+            }
+          `}
+        >
+          {/* BRAND */}
 
-            <button
-              type="button"
-              onClick={() => setIsDesktopCollapsed((previous) => !previous)}
-              className="hidden flex-shrink-0 rounded-lg p-2 text-[#6D4FC2] transition hover:bg-[#E9D8FD]/50 lg:block"
-              aria-label={
-                isDesktopCollapsed ? "Perbesar sidebar" : "Perkecil sidebar"
-              }
-            >
-              <svg
-                className={`h-5 w-5 transition-transform duration-300 ${
-                  isDesktopCollapsed ? "rotate-180" : ""
-                }`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M11 19l-7-7 7-7m8 14l-7-7 7-7"
-                />
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        {/* =========================
-            NAVIGATION
-        ========================== */}
-        <nav className="flex-1 space-y-1.5 overflow-y-auto p-4">
-          {menuItems.map((item) => {
-            const isActive = isActiveRoute(item.href);
-
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={handleLinkClick}
-                className={`
-                  group relative flex items-center gap-3
-                  rounded-xl px-3 py-3
-                  transition-all duration-200
-                  ${
-                    isActive
-                      ? "bg-[#A78BFA] text-white shadow-sm shadow-[#A78BFA]/25"
-                      : "text-[#3B2E52]/80 hover:bg-[#E9D8FD]/50 hover:text-[#3B2E52]"
-                  }
-                `}
-              >
-                <span
-                  className={`flex-shrink-0 ${
-                    isActive ? "text-white" : "text-[#6D4FC2]"
-                  }`}
-                >
-                  {item.icon}
-                </span>
-
-                <span
-                  className={`
-                    overflow-hidden whitespace-nowrap
-                    text-sm font-medium
-                    transition-all duration-300
-                    ${
-                      !isMobile && isDesktopCollapsed
-                        ? "w-0 opacity-0"
-                        : "w-auto opacity-100"
-                    }
-                  `}
-                >
-                  {item.label}
-                </span>
-
-                {/* Tooltip desktop collapsed */}
-                {!isMobile && isDesktopCollapsed && (
-                  <span className="pointer-events-none absolute left-full z-50 ml-3 whitespace-nowrap rounded-lg bg-[#3B2E52] px-3 py-2 text-xs text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
-                    {item.label}
-                  </span>
-                )}
-
-                {/* Active dot */}
-                {isActive && !isDesktopCollapsed && (
-                  <span className="absolute right-3 top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-white/90" />
-                )}
-              </Link>
-            );
-          })}
-        </nav>
-
-        {/* =========================
-            USER & LOGOUT
-        ========================== */}
-        <div className="flex-shrink-0 border-t border-[#D8C8F0]/30 p-4">
           <div
             className={`
-              mb-3 overflow-hidden
-              transition-all duration-300
+              flex
+              min-w-0
+              items-center
+              gap-3
+              overflow-hidden
+              transition-all
+              duration-300
               ${
                 !isMobile && isDesktopCollapsed
-                  ? "h-0 opacity-0"
-                  : "h-auto opacity-100"
+                  ? "w-0 opacity-0"
+                  : "w-auto opacity-100"
               }
             `}
           >
-            <div className="flex items-center gap-3 rounded-xl bg-[#F5F1FA]/80 p-3">
-              <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-[#A78BFA] text-sm font-bold text-white">
-                {userEmail?.charAt(0).toUpperCase() || "A"}
+            <div
+              className="
+                flex
+                h-9
+                w-9
+                flex-shrink-0
+                items-center
+                justify-center
+                rounded-xl
+                border
+                border-[#C084FC]/15
+                bg-[#C084FC]/[0.07]
+                text-[#D8B4FE]
+              "
+            >
+              <Archive size={16} strokeWidth={1.8} />
+            </div>
+
+            <div className="min-w-0">
+              <p
+                className="
+                  whitespace-nowrap
+                  text-[8px]
+                  font-semibold
+                  uppercase
+                  tracking-[0.2em]
+                  text-[#D8B4FE]/45
+                "
+              >
+                Admin Workspace
+              </p>
+
+              <p
+                className="
+                  mt-0.5
+                  whitespace-nowrap
+                  font-serif
+                  text-sm
+                  text-white/85
+                "
+              >
+                The Archive
+              </p>
+            </div>
+          </div>
+
+          {/* COLLAPSE BUTTON */}
+
+          <button
+            type="button"
+            onClick={() => setIsDesktopCollapsed((previous) => !previous)}
+            className="
+              group
+              flex
+              h-9
+              w-9
+              flex-shrink-0
+              items-center
+              justify-center
+              rounded-xl
+              border
+              border-white/[0.05]
+              bg-white/[0.02]
+              text-white/30
+              transition
+              hover:border-[#C084FC]/15
+              hover:bg-[#C084FC]/[0.06]
+              hover:text-[#D8B4FE]
+            "
+            aria-label={
+              isDesktopCollapsed ? "Perbesar sidebar" : "Perkecil sidebar"
+            }
+          >
+            {isDesktopCollapsed ? (
+              <ChevronRight
+                size={17}
+                strokeWidth={1.8}
+                className="transition-transform duration-300 group-hover:translate-x-0.5"
+              />
+            ) : (
+              <ChevronLeft
+                size={17}
+                strokeWidth={1.8}
+                className="transition-transform duration-300 group-hover:-translate-x-0.5"
+              />
+            )}
+          </button>
+        </div>
+
+        {/* ====================================================
+            NAVIGATION
+        ==================================================== */}
+
+        <nav className="flex-1 overflow-y-auto px-2 py-4 scrollbar-none">
+          {/* SECTION LABEL */}
+
+          <div
+            className={`
+              mb-2
+              overflow-hidden
+              px-3
+              transition-all
+              duration-300
+              ${
+                !isMobile && isDesktopCollapsed
+                  ? "h-0 opacity-0"
+                  : "h-4 opacity-100"
+              }
+            `}
+          >
+            <span
+              className="
+                whitespace-nowrap
+                text-[8px]
+                font-semibold
+                uppercase
+                tracking-[0.18em]
+                text-white/20
+              "
+            >
+              Navigation
+            </span>
+          </div>
+
+          {/* MENU ITEMS */}
+
+          <div className="space-y-1">
+            {menuItems.map((item) => {
+              const isActive = isActiveRoute(item.href);
+
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={handleLinkClick}
+                  className={`
+                    group
+                    relative
+                    flex
+                    h-11
+                    items-center
+                    gap-3
+                    rounded-xl
+                    transition-all
+                    duration-200
+                    ${
+                      !isMobile && isDesktopCollapsed
+                        ? "justify-center px-0"
+                        : "px-3"
+                    }
+                    ${
+                      isActive
+                        ? `
+                          border
+                          border-[#C084FC]/10
+                          bg-[#A78BFA]/[0.12]
+                          text-[#D8B4FE]
+                          shadow-[0_8px_25px_rgba(139,92,246,0.08)]
+                        `
+                        : `
+                          border
+                          border-transparent
+                          text-white/35
+                          hover:border-white/[0.04]
+                          hover:bg-white/[0.025]
+                          hover:text-white/75
+                        `
+                    }
+                  `}
+                >
+                  {/* ACTIVE INDICATOR */}
+
+                  {isActive && (
+                    <span
+                      className="
+                        absolute
+                        left-0
+                        top-1/2
+                        h-5
+                        w-[2px]
+                        -translate-y-1/2
+                        rounded-r-full
+                        bg-gradient-to-b
+                        from-[#C084FC]
+                        to-[#F3A9C7]
+                      "
+                    />
+                  )}
+
+                  {/* ICON */}
+
+                  <span
+                    className={`
+                      flex
+                      flex-shrink-0
+                      items-center
+                      justify-center
+                      transition-colors
+                      duration-200
+                      ${
+                        isActive
+                          ? "text-[#C084FC]"
+                          : "text-[#8B5CF6]/55 group-hover:text-[#C084FC]"
+                      }
+                    `}
+                  >
+                    {item.icon}
+                  </span>
+
+                  {/* LABEL */}
+
+                  <span
+                    className={`
+                      min-w-0
+                      overflow-hidden
+                      whitespace-nowrap
+                      text-[10px]
+                      font-semibold
+                      tracking-[0.01em]
+                      transition-all
+                      duration-300
+                      ${
+                        !isMobile && isDesktopCollapsed
+                          ? "w-0 opacity-0"
+                          : "w-auto opacity-100"
+                      }
+                    `}
+                  >
+                    {item.label}
+                  </span>
+
+                  {/* ACTIVE DOT */}
+
+                  {isActive && (!isDesktopCollapsed || isMobile) && (
+                    <span
+                      className="
+                          ml-auto
+                          h-1.5
+                          w-1.5
+                          flex-shrink-0
+                          rounded-full
+                          bg-[#F3A9C7]
+                          shadow-[0_0_10px_rgba(243,169,199,0.45)]
+                        "
+                    />
+                  )}
+
+                  {/* COLLAPSED TOOLTIP */}
+
+                  {!isMobile && isDesktopCollapsed && (
+                    <span
+                      className="
+                        pointer-events-none
+                        absolute
+                        left-full
+                        z-[70]
+                        ml-3
+                        whitespace-nowrap
+                        rounded-lg
+                        border
+                        border-white/[0.07]
+                        bg-[#11122D]
+                        px-3
+                        py-2
+                        text-[9px]
+                        font-medium
+                        text-white/75
+                        opacity-0
+                        shadow-[0_10px_30px_rgba(0,0,0,0.35)]
+                        transition-all
+                        duration-200
+                        group-hover:translate-x-0
+                        group-hover:opacity-100
+                      "
+                    >
+                      {item.label}
+                    </span>
+                  )}
+                </Link>
+              );
+            })}
+          </div>
+        </nav>
+
+        {/* ====================================================
+            BOTTOM AREA
+        ==================================================== */}
+
+        <div
+          className="
+            flex-shrink-0
+            border-t
+            border-white/[0.05]
+            p-2
+          "
+        >
+          {/* USER */}
+
+          <div
+            className={`
+              mb-2
+              overflow-hidden
+              rounded-xl
+              border
+              border-white/[0.04]
+              bg-white/[0.018]
+              transition-all
+              duration-300
+              ${
+                !isMobile && isDesktopCollapsed
+                  ? "h-0 border-transparent opacity-0"
+                  : "h-[58px] opacity-100"
+              }
+            `}
+          >
+            <div className="flex h-full items-center gap-3 px-3">
+              {/* AVATAR */}
+
+              <div
+                className="
+                  flex
+                  h-8
+                  w-8
+                  flex-shrink-0
+                  items-center
+                  justify-center
+                  rounded-full
+                  border
+                  border-[#C084FC]/15
+                  bg-[#A78BFA]/[0.12]
+                  text-[10px]
+                  font-semibold
+                  text-[#D8B4FE]
+                "
+              >
+                {userInitial}
               </div>
 
+              {/* USER INFO */}
+
               <div className="min-w-0">
-                <p className="truncate text-xs font-semibold text-[#3B2E52]">
+                <p
+                  className="
+                    truncate
+                    text-[9px]
+                    font-semibold
+                    text-white/65
+                  "
+                >
                   {userEmail || "Admin"}
                 </p>
 
-                <p className="mt-0.5 text-[10px] text-[#6D4FC2]/45">
+                <p
+                  className="
+                    mt-0.5
+                    text-[8px]
+                    uppercase
+                    tracking-[0.1em]
+                    text-white/20
+                  "
+                >
                   Administrator
                 </p>
               </div>
             </div>
           </div>
 
+          {/* LOGOUT */}
+
           <button
             type="button"
-            onClick={handleLogout}
+            onClick={() => void handleLogout()}
             className={`
-              group relative flex w-full items-center gap-3
-              rounded-xl px-3 py-3
-              text-red-400
-              transition
-              hover:bg-red-50 hover:text-red-600
-              ${!isMobile && isDesktopCollapsed ? "justify-center" : ""}
+              group
+              relative
+              flex
+              h-11
+              w-full
+              items-center
+              gap-3
+              rounded-xl
+              border
+              border-transparent
+              text-red-300/45
+              transition-all
+              duration-200
+              hover:border-red-400/10
+              hover:bg-red-400/[0.04]
+              hover:text-red-300/80
+              ${
+                !isMobile && isDesktopCollapsed ? "justify-center px-0" : "px-3"
+              }
             `}
             aria-label="Logout"
           >
-            <svg
-              className="h-5 w-5 flex-shrink-0"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
-              />
-            </svg>
+            <LogOut
+              size={18}
+              strokeWidth={1.8}
+              className="
+                flex-shrink-0
+                transition-transform
+                duration-200
+                group-hover:translate-x-0.5
+              "
+            />
 
             <span
               className={`
-                overflow-hidden whitespace-nowrap
-                text-sm font-medium
-                transition-all duration-300
+                overflow-hidden
+                whitespace-nowrap
+                text-[10px]
+                font-semibold
+                transition-all
+                duration-300
                 ${
                   !isMobile && isDesktopCollapsed
                     ? "w-0 opacity-0"
@@ -455,8 +700,33 @@ export default function Sidebar({
               Logout
             </span>
 
+            {/* COLLAPSED TOOLTIP */}
+
             {!isMobile && isDesktopCollapsed && (
-              <span className="pointer-events-none absolute left-full z-50 ml-3 whitespace-nowrap rounded-lg bg-red-500 px-3 py-2 text-xs text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+              <span
+                className="
+                  pointer-events-none
+                  absolute
+                  left-full
+                  z-[70]
+                  ml-3
+                  whitespace-nowrap
+                  rounded-lg
+                  border
+                  border-red-400/10
+                  bg-[#171329]
+                  px-3
+                  py-2
+                  text-[9px]
+                  font-medium
+                  text-red-300/75
+                  opacity-0
+                  shadow-[0_10px_30px_rgba(0,0,0,0.35)]
+                  transition-all
+                  duration-200
+                  group-hover:opacity-100
+                "
+              >
                 Logout
               </span>
             )}
@@ -464,13 +734,22 @@ export default function Sidebar({
         </div>
       </aside>
 
-      {/* =========================
+      {/* ======================================================
           MOBILE OVERLAY
-      ========================== */}
+      ====================================================== */}
+
       {isMobile && isMobileOpen && (
         <button
           type="button"
-          className="fixed inset-0 z-30 cursor-default bg-[#21182F]/40 backdrop-blur-[2px] lg:hidden"
+          className="
+            fixed
+            inset-0
+            z-40
+            cursor-default
+            bg-[#050616]/65
+            backdrop-blur-[3px]
+            lg:hidden
+          "
           onClick={() => setIsMobileOpen(false)}
           aria-label="Tutup sidebar"
         />

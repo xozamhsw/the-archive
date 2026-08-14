@@ -143,36 +143,55 @@ export interface BluetoothPrinterInfo {
 
 export interface ThermalPhotoPrintOptions {
   /**
-   * Lebar print RPP02N 58mm.
+   * Lebar gambar thermal dalam dot.
    *
-   * Default:
-   * 384 dots.
+   * Untuk RPP02N 58mm kita sengaja memakai
+   * 360 dot, sedikit di bawah lebar maksimum
+   * 384 dot. Ini memberi margin kecil dan
+   * mengurangi beban head saat mencetak foto.
    */
   widthDots?: number;
 
   /**
-   * Mengaktifkan Floyd-Steinberg dithering.
-   *
-   * Sangat direkomendasikan untuk foto.
+   * Aktifkan proses dithering hitam-putih.
    */
   dither?: boolean;
 
   /**
-   * Threshold grayscale.
+   * Threshold hitam-putih 0-255.
    *
-   * Lebih rendah:
-   * hasil lebih terang.
-   *
-   * Lebih tinggi:
-   * hasil lebih gelap.
-   *
-   * Default:
-   * 128
+   * Lebih kecil = hasil lebih terang.
+   * Lebih besar = hasil lebih gelap.
    */
   threshold?: number;
 
   /**
-   * Jumlah feed line setelah foto.
+   * Atkinson lebih ringan dan cenderung lebih
+   * halus untuk foto thermal kecil.
+   */
+  ditherAlgorithm?: "atkinson" | "floyd-steinberg" | "threshold";
+
+  /**
+   * Gamma correction.
+   * Nilai < 1 membantu membuka mid-tone wajah.
+   */
+  gamma?: number;
+
+  /**
+   * Tambahan brightness dalam rentang kurang lebih
+   * -255 sampai 255. Nilai positif membuat gambar
+   * lebih terang.
+   */
+  brightness?: number;
+
+  /**
+   * Contrast multiplier.
+   * 1 = normal.
+   */
+  contrast?: number;
+
+  /**
+   * Feed kertas setelah foto selesai.
    */
   feedLines?: number;
 }
@@ -211,7 +230,7 @@ const OPTIONAL_SERVICES: string[] = [
 
 const RECEIPT_WIDTH_58MM = 32;
 
-const PHOTO_WIDTH_58MM = 384;
+const PHOTO_WIDTH_58MM = 360;
 
 /**
  * Ukuran 100 byte pada implementasi sebelumnya terlalu agresif untuk
@@ -1022,247 +1041,222 @@ async function loadPhotoImageData(imageUrl: string, requestedWidth: number) {
 
 /**
  * ============================================
- * GRAYSCALE + DITHERING
+ * PHOTO PRE-PROCESSING
  * ============================================
  */
 
-function createMonochromeRaster(
+function clampByte(value: number) {
+  return Math.max(0, Math.min(255, value));
+}
+
+function createProcessedGrayscale(
   rgba: Uint8ClampedArray,
-
   width: number,
-
   height: number,
-
-  threshold: number,
-
-  useDither: boolean,
+  brightness: number,
+  contrast: number,
+  gamma: number,
 ) {
   const grayscale = new Float32Array(width * height);
 
-  /**
-   * RGB -> luminance.
-   */
+  let minLuminance = 255;
+  let maxLuminance = 0;
+
   for (let pixel = 0; pixel < width * height; pixel += 1) {
     const rgbaIndex = pixel * 4;
 
     const alpha = rgba[rgbaIndex + 3] / 255;
 
-    /**
-     * Blend transparent area
-     * dengan putih.
-     */
     const red = 255 + (rgba[rgbaIndex] - 255) * alpha;
-
     const green = 255 + (rgba[rgbaIndex + 1] - 255) * alpha;
-
     const blue = 255 + (rgba[rgbaIndex + 2] - 255) * alpha;
 
-    grayscale[pixel] = red * 0.299 + green * 0.587 + blue * 0.114;
+    const luminance = red * 0.299 + green * 0.587 + blue * 0.114;
+
+    grayscale[pixel] = luminance;
+
+    if (luminance < minLuminance) {
+      minLuminance = luminance;
+    }
+
+    if (luminance > maxLuminance) {
+      maxLuminance = luminance;
+    }
   }
+
+  /**
+   * Auto-level ringan.
+   *
+   * Foto photobooth sering punya dynamic range sempit.
+   * Normalisasi ini membuat detail wajah lebih mudah
+   * diterjemahkan ke 1-bit thermal.
+   */
+  const luminanceRange = Math.max(1, maxLuminance - minLuminance);
+
+  for (let index = 0; index < grayscale.length; index += 1) {
+    let value = ((grayscale[index] - minLuminance) / luminanceRange) * 255;
+
+    value = (value - 128) * contrast + 128 + brightness;
+    value = clampByte(value);
+
+    /**
+     * gamma < 1 membuka mid-tone sehingga area kulit
+     * tidak berubah menjadi blok hitam besar.
+     */
+    value = 255 * Math.pow(value / 255, gamma);
+
+    grayscale[index] = clampByte(value);
+  }
+
+  return grayscale;
+}
+
+/**
+ * ============================================
+ * MONOCHROME BITMAP
+ * ============================================
+ */
+
+function createMonochromeBitmap(
+  rgba: Uint8ClampedArray,
+  width: number,
+  height: number,
+  threshold: number,
+  useDither: boolean,
+  ditherAlgorithm: "atkinson" | "floyd-steinberg" | "threshold",
+  brightness: number,
+  contrast: number,
+  gamma: number,
+) {
+  const grayscale = createProcessedGrayscale(
+    rgba,
+    width,
+    height,
+    brightness,
+    contrast,
+    gamma,
+  );
 
   const blackPixels = new Uint8Array(width * height);
 
+  if (!useDither || ditherAlgorithm === "threshold") {
+    for (let index = 0; index < grayscale.length; index += 1) {
+      blackPixels[index] = grayscale[index] < threshold ? 1 : 0;
+    }
+
+    return blackPixels;
+  }
+
   /**
    * ========================================
-   * FLOYD-STEINBERG DITHERING
+   * ATKINSON DITHERING
    * ========================================
+   *
+   * Dibanding Floyd-Steinberg, Atkinson hanya
+   * menyebarkan sebagian error. Hasilnya cenderung
+   * lebih terang dan lebih bersih untuk thermal.
    */
-  if (useDither) {
+  if (ditherAlgorithm === "atkinson") {
     for (let y = 0; y < height; y += 1) {
       for (let x = 0; x < width; x += 1) {
         const index = y * width + x;
 
         const oldPixel = grayscale[index];
-
         const newPixel = oldPixel < threshold ? 0 : 255;
 
         blackPixels[index] = newPixel === 0 ? 1 : 0;
 
-        const error = oldPixel - newPixel;
+        const error = (oldPixel - newPixel) / 8;
 
-        /**
-         * Right.
-         */
         if (x + 1 < width) {
-          grayscale[index + 1] += error * (7 / 16);
+          grayscale[index + 1] += error;
         }
 
-        /**
-         * Bottom.
-         */
+        if (x + 2 < width) {
+          grayscale[index + 2] += error;
+        }
+
         if (y + 1 < height) {
-          /**
-           * Bottom-left.
-           */
           if (x > 0) {
-            grayscale[index + width - 1] += error * (3 / 16);
+            grayscale[index + width - 1] += error;
           }
 
-          /**
-           * Bottom.
-           */
-          grayscale[index + width] += error * (5 / 16);
+          grayscale[index + width] += error;
 
-          /**
-           * Bottom-right.
-           */
           if (x + 1 < width) {
-            grayscale[index + width + 1] += error * (1 / 16);
+            grayscale[index + width + 1] += error;
           }
+        }
+
+        if (y + 2 < height) {
+          grayscale[index + width * 2] += error;
         }
       }
     }
-  } else {
-    /**
-     * Simple threshold.
-     */
-    for (let index = 0; index < grayscale.length; index += 1) {
-      blackPixels[index] = grayscale[index] < threshold ? 1 : 0;
-    }
+
+    return blackPixels;
   }
 
   /**
    * ========================================
-   * 1-BIT RASTER
+   * FLOYD-STEINBERG
    * ========================================
+   *
+   * Tetap tersedia sebagai opsi jika suatu saat
+   * detail tertentu lebih bagus memakai algoritma ini.
    */
-
-  const widthBytes = Math.ceil(width / 8);
-
-  const raster = new Uint8Array(widthBytes * height);
-
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
-      const pixelIndex = y * width + x;
+      const index = y * width + x;
 
-      if (blackPixels[pixelIndex] === 0) {
-        continue;
+      const oldPixel = grayscale[index];
+      const newPixel = oldPixel < threshold ? 0 : 255;
+
+      blackPixels[index] = newPixel === 0 ? 1 : 0;
+
+      const error = oldPixel - newPixel;
+
+      if (x + 1 < width) {
+        grayscale[index + 1] += error * (7 / 16);
       }
 
-      const byteIndex = y * widthBytes + Math.floor(x / 8);
+      if (y + 1 < height) {
+        if (x > 0) {
+          grayscale[index + width - 1] += error * (3 / 16);
+        }
 
-      const bit = 7 - (x % 8);
+        grayscale[index + width] += error * (5 / 16);
 
-      raster[byteIndex] |= 1 << bit;
+        if (x + 1 < width) {
+          grayscale[index + width + 1] += error * (1 / 16);
+        }
+      }
     }
   }
 
-  return {
-    raster,
-
-    widthBytes,
-  };
+  return blackPixels;
 }
 
 /**
  * ============================================
- * ESC/POS RASTER HEADER
+ * ESC * 24-DOT PHOTO STREAM
  * ============================================
  *
- * GS v 0
+ * RPP02N tertentu menghasilkan banding ketika foto
+ * tinggi dikirim sebagai satu GS v 0 raster besar.
  *
- * xL xH = width byte
- * yL yH = height pixel
+ * Mode ESC * 33 mencetak gambar sebagai strip 24-dot.
+ * Yang penting, setiap strip memiliki line spacing yang
+ * tepat 24-dot sehingga tidak ada celah tambahan di
+ * antara strip.
  */
 
-function createRasterHeader(
-  widthBytes: number,
-
+function buildEscStarPhotoStream(
+  blackPixels: Uint8Array,
+  width: number,
   height: number,
+  feedLines: number,
 ) {
-  const xLow = widthBytes & 0xff;
-
-  const xHigh = (widthBytes >> 8) & 0xff;
-
-  const yLow = height & 0xff;
-
-  const yHigh = (height >> 8) & 0xff;
-
-  return Uint8Array.from([GS, 0x76, 0x30, 0x00, xLow, xHigh, yLow, yHigh]);
-}
-
-/**
- * ============================================
- * PRINT PHOTO
- * ============================================
- */
-
-export async function printBluetoothPhoto(
-  imageUrl: string,
-
-  options: ThermalPhotoPrintOptions = {},
-) {
-  if (!isBluetoothPrinterConnected()) {
-    throw new Error(
-      "RPP02N belum terhubung. Hubungkan printer terlebih dahulu.",
-    );
-  }
-
-  const widthDots = options.widthDots ?? PHOTO_WIDTH_58MM;
-
-  /**
-   * Sebelumnya 145.
-   *
-   * 128 membuat hasil sedikit
-   * lebih terang sehingga wajah
-   * tidak terlalu hitam.
-   */
-  const threshold = Math.min(255, Math.max(0, options.threshold ?? 128));
-
-  const useDither = options.dither ?? true;
-
-  const feedLines = Math.min(255, Math.max(0, options.feedLines ?? 4));
-
-  /**
-   * ========================================
-   * LOAD IMAGE
-   * ========================================
-   */
-
-  const image = await loadPhotoImageData(imageUrl, widthDots);
-
-  /**
-   * ========================================
-   * CONVERT IMAGE
-   * ========================================
-   */
-
-  const { raster, widthBytes } = createMonochromeRaster(
-    image.data,
-    image.width,
-    image.height,
-    threshold,
-    useDither,
-  );
-
-  /**
-   * ========================================
-   * IMPORTANT FIX
-   * ========================================
-   *
-   * Versi sebelumnya melakukan:
-   *
-   * GS v 0
-   * 96 row
-   *
-   * GS v 0
-   * 96 row
-   *
-   * GS v 0
-   * 96 row
-   *
-   * Akibatnya setiap command baru dapat
-   * menyebabkan motor printer bergerak
-   * sedikit dan foto terlihat patah.
-   *
-   * Sekarang:
-   *
-   * SATU GS v 0
-   * + SATU FOTO UTUH.
-   *
-   * Yang dipecah hanyalah packet BLE.
-   */
-
   const commands: Uint8Array[] = [];
 
   /**
@@ -1276,33 +1270,137 @@ export async function printBluetoothPhoto(
   commands.push(Uint8Array.from([ESC, 0x61, 0x01]));
 
   /**
-   * ONE COMPLETE IMAGE.
+   * Set line spacing = 24 vertical dots.
    */
-  commands.push(createRasterHeader(widthBytes, image.height));
+  commands.push(Uint8Array.from([ESC, 0x33, 24]));
 
-  commands.push(raster);
+  const nLow = width & 0xff;
+  const nHigh = (width >> 8) & 0xff;
+
+  for (let offsetY = 0; offsetY < height; offsetY += 24) {
+    /**
+     * ESC * 33 nL nH
+     * + width * 3 bytes
+     * + LF
+     */
+    const band = new Uint8Array(5 + width * 3 + 1);
+
+    band[0] = ESC;
+    band[1] = 0x2a;
+    band[2] = 33;
+    band[3] = nLow;
+    band[4] = nHigh;
+
+    let pointer = 5;
+
+    for (let x = 0; x < width; x += 1) {
+      for (let byteGroup = 0; byteGroup < 3; byteGroup += 1) {
+        let outputByte = 0;
+
+        for (let bit = 0; bit < 8; bit += 1) {
+          const y = offsetY + byteGroup * 8 + bit;
+
+          if (y >= height) {
+            continue;
+          }
+
+          const pixelIndex = y * width + x;
+
+          if (blackPixels[pixelIndex] === 1) {
+            outputByte |= 0x80 >> bit;
+          }
+        }
+
+        band[pointer] = outputByte;
+        pointer += 1;
+      }
+    }
+
+    /**
+     * LF menjalankan kertas tepat sebesar line spacing
+     * yang sudah diset 24-dot.
+     */
+    band[pointer] = 0x0a;
+
+    commands.push(band);
+  }
 
   /**
-   * Feed paper.
+   * Restore default line spacing.
    */
+  commands.push(Uint8Array.from([ESC, 0x32]));
+
   if (feedLines > 0) {
     commands.push(Uint8Array.from([ESC, 0x64, feedLines]));
   }
 
   /**
-   * Reset alignment.
+   * Restore left alignment.
    */
   commands.push(Uint8Array.from([ESC, 0x61, 0x00]));
 
-  const printStream = concatBytes(...commands);
+  return concatBytes(...commands);
+}
+
+/**
+ * ============================================
+ * PRINT PHOTO
+ * ============================================
+ */
+
+export async function printBluetoothPhoto(
+  imageUrl: string,
+  options: ThermalPhotoPrintOptions = {},
+) {
+  if (!isBluetoothPrinterConnected()) {
+    throw new Error(
+      "RPP02N belum terhubung. Hubungkan printer terlebih dahulu.",
+    );
+  }
 
   /**
-   * SATU stream ESC/POS utuh.
-   *
-   * writeToPrinter() menangani fragmentasi BLE + pacing transport.
-   * Raster tidak dipecah menjadi beberapa command GS v 0, jadi tidak
-   * menambahkan garis horizontal antar blok gambar.
+   * Sedikit lebih kecil dari 384-dot maksimum.
+   * Memberi margin dan mengurangi density/power load
+   * pada satu horizontal line.
    */
+  const requestedWidth = options.widthDots ?? PHOTO_WIDTH_58MM;
+  const widthDots = Math.min(360, Math.max(8, requestedWidth));
+
+  const threshold = Math.min(255, Math.max(0, options.threshold ?? 122));
+
+  const useDither = options.dither ?? true;
+
+  const ditherAlgorithm = options.ditherAlgorithm ?? "atkinson";
+
+  const gamma = Math.max(0.1, options.gamma ?? 0.92);
+
+  const brightness = Math.max(-255, Math.min(255, options.brightness ?? 10));
+
+  const contrast = Math.max(0.1, options.contrast ?? 1.08);
+
+  const feedLines = Math.min(255, Math.max(0, options.feedLines ?? 4));
+
+  const image = await loadPhotoImageData(imageUrl, widthDots);
+
+  const blackPixels = createMonochromeBitmap(
+    image.data,
+    image.width,
+    image.height,
+    threshold,
+    useDither,
+    ditherAlgorithm,
+    brightness,
+    contrast,
+    gamma,
+  );
+
+  const printStream = buildEscStarPhotoStream(
+    blackPixels,
+    image.width,
+    image.height,
+    feedLines,
+  );
+
   await writeToPrinter(printStream);
 }
 
