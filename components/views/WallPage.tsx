@@ -22,7 +22,7 @@ import {
   X,
 } from "lucide-react";
 
-import { db, ensurePublicUser } from "@/lib/firebase";
+import { db } from "@/lib/firebase";
 
 import ArchiveShell from "@/components/ui/ArchiveShell";
 import ArchiveContainer from "@/components/ui/ArchiveContainer";
@@ -35,7 +35,6 @@ interface WallMessage {
   name: string;
   message: string;
   emoji: string;
-  ownerUid?: string;
   createdAt: Timestamp | null;
 }
 
@@ -54,17 +53,21 @@ function formatDate(timestamp: Timestamp | null) {
     return "Baru saja";
   }
 
-  const date = timestamp.toDate();
-
   return new Intl.DateTimeFormat("id-ID", {
     day: "2-digit",
     month: "short",
     year: "numeric",
-  }).format(date);
+  }).format(timestamp.toDate());
 }
 
 function getInitial(name: string) {
-  if (!name || name.toLowerCase() === "anonymous") {
+  const normalizedName = name.trim().toLowerCase();
+
+  if (
+    !normalizedName ||
+    normalizedName === "anonymous" ||
+    normalizedName === "anonim"
+  ) {
     return "?";
   }
 
@@ -81,42 +84,10 @@ export default function WallPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [messages, setMessages] = useState<WallMessage[]>([]);
-  const [currentUid, setCurrentUid] = useState<string | null>(null);
-
   const [openedMessage, setOpenedMessage] = useState<WallMessage | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [showAllMessages, setShowAllMessages] = useState(false);
-
-  /*
-   * =========================================================
-   * ANONYMOUS USER
-   * =========================================================
-   */
-
-  useEffect(() => {
-    let cancelled = false;
-
-    void ensurePublicUser()
-      .then((user) => {
-        if (!cancelled) {
-          setCurrentUid(user.uid);
-        }
-      })
-      .catch((authError) => {
-        console.error("Anonymous auth error:", authError);
-
-        if (!cancelled) {
-          setError(
-            "Sesi pengunjung belum bisa dibuat. Silakan refresh halaman.",
-          );
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   /*
    * =========================================================
@@ -133,21 +104,33 @@ export default function WallPage() {
     const unsubscribe = onSnapshot(
       wallQuery,
       (snapshot) => {
-        const data = snapshot.docs.map((snapshotDoc) => {
+        const data: WallMessage[] = snapshot.docs.map((snapshotDoc) => {
           const documentData = snapshotDoc.data();
 
           return {
             id: snapshotDoc.id,
-            name: documentData.name ?? "Anonymous",
-            message: documentData.message ?? "",
-            emoji: documentData.emoji ?? "💌",
-            ownerUid: documentData.ownerUid,
-            createdAt: documentData.createdAt ?? null,
+            name:
+              typeof documentData.name === "string"
+                ? documentData.name
+                : "Anonymous",
+            message:
+              typeof documentData.message === "string"
+                ? documentData.message
+                : "",
+            emoji:
+              typeof documentData.emoji === "string"
+                ? documentData.emoji
+                : "💌",
+            createdAt:
+              documentData.createdAt instanceof Timestamp
+                ? documentData.createdAt
+                : null,
           };
-        }) as WallMessage[];
+        });
 
         setMessages(data);
         setLoading(false);
+        setError(null);
       },
       (snapshotError) => {
         console.error("Wall listener error:", snapshotError);
@@ -183,20 +166,6 @@ export default function WallPage() {
       window.removeEventListener("keydown", handleEscape);
     };
   }, [openedMessage]);
-
-  /*
-   * =========================================================
-   * MY MESSAGE COUNT
-   * =========================================================
-   */
-
-  const myMessageCount = useMemo(() => {
-    if (!currentUid) {
-      return 0;
-    }
-
-    return messages.filter((item) => item.ownerUid === currentUid).length;
-  }, [currentUid, messages]);
 
   /*
    * =========================================================
@@ -236,6 +205,10 @@ export default function WallPage() {
     const trimmedName = name.trim();
     const trimmedMessage = message.trim();
 
+    /*
+     * VALIDATION
+     */
+
     if (!isAnonymous && !trimmedName) {
       setError("Nama tidak boleh kosong.");
       return;
@@ -246,7 +219,7 @@ export default function WallPage() {
       return;
     }
 
-    if (trimmedName.length > 80) {
+    if (!isAnonymous && trimmedName.length > 80) {
       setError("Nama maksimal 80 karakter.");
       return;
     }
@@ -256,27 +229,41 @@ export default function WallPage() {
       return;
     }
 
+    if (!emoji) {
+      setError("Silakan pilih emoji.");
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
 
     try {
-      const user = await ensurePublicUser();
-
-      setCurrentUid(user.uid);
+      /*
+       * PUBLIC WALL
+       *
+       * Tidak menggunakan:
+       * - ensurePublicUser()
+       * - Firebase Anonymous Auth
+       * - ownerUid
+       */
 
       await addDoc(collection(db, "wall"), {
         name: isAnonymous ? "Anonymous" : trimmedName,
         message: trimmedMessage,
         emoji,
-        ownerUid: user.uid,
         createdAt: serverTimestamp(),
       });
+
+      /*
+       * RESET FORM
+       */
 
       setName("");
       setMessage("");
       setEmoji(EMOJI_OPTIONS[0]);
       setIsAnonymous(false);
       setShowAllMessages(false);
+      setError(null);
     } catch (submitError) {
       console.error("Submit wall error:", submitError);
 
@@ -406,10 +393,10 @@ export default function WallPage() {
           </div>
 
           {/* =====================================================
-              HEADER
+              HEADER / HERO
           ====================================================== */}
 
-          <section className="relative pt-10 pb-7 sm:pt-14 sm:pb-9">
+          <section className="relative pb-7 pt-10 sm:pb-9 sm:pt-14">
             <ArchiveContainer size="wide">
               <div className="flex flex-col gap-7 xl:flex-row xl:gap-10">
                 {/* PAGE NUMBER */}
@@ -481,62 +468,53 @@ export default function WallPage() {
 
                         <div className="mt-6 flex items-center gap-3">
                           <div className="flex -space-x-2">
-                            {avatarInitials.length > 0
-                              ? avatarInitials.map((initial, index) => (
-                                  <div
-                                    key={`${initial}-${index}`}
-                                    className="
-                                      flex h-8 w-8
-                                      items-center justify-center
-                                      rounded-full
-                                      border-2
-                                      border-[#080a19]
-                                      bg-gradient-to-br
-                                      from-[#C77AA2]
-                                      to-[#725184]
-                                      text-[10px]
-                                      font-semibold
-                                      text-white
-                                    "
-                                  >
-                                    {initial}
-                                  </div>
-                                ))
-                              : ["A", "✦", "♡"].map((item, index) => (
-                                  <div
-                                    key={`${item}-${index}`}
-                                    className="
-                                      flex h-8 w-8
-                                      items-center justify-center
-                                      rounded-full
-                                      border-2
-                                      border-[#080a19]
-                                      bg-white/[0.05]
-                                      text-[10px]
-                                      font-semibold
-                                      text-[var(--archive-gold-soft)]
-                                    "
-                                  >
-                                    {item}
-                                  </div>
-                                ))}
+                            {avatarInitials.length > 0 ? (
+                              avatarInitials.map((initial, index) => (
+                                <div
+                                  key={`${initial}-${index}`}
+                                  className="
+                                    flex h-8 w-8
+                                    items-center justify-center
+                                    rounded-full
+                                    border-2
+                                    border-[#080a19]
+                                    bg-gradient-to-br
+                                    from-[#C77AA2]
+                                    to-[#725184]
+                                    text-[10px]
+                                    font-semibold
+                                    text-white
+                                  "
+                                >
+                                  {initial}
+                                </div>
+                              ))
+                            ) : (
+                              <div
+                                className="
+                                  flex h-8 w-8
+                                  items-center justify-center
+                                  rounded-full
+                                  border-2
+                                  border-[#080a19]
+                                  bg-white/[0.04]
+                                  text-[10px]
+                                  text-[var(--archive-muted)]/50
+                                "
+                              >
+                                ·
+                              </div>
+                            )}
                           </div>
-
-                          <div className="h-5 w-px bg-white/10" />
 
                           <div className="flex items-center gap-1.5">
                             <Heart
-                              size={13}
+                              size={12}
                               fill="currentColor"
                               className="text-[var(--archive-pink-soft)]"
                             />
 
-                            <span
-                              className="
-                                text-xs
-                                text-[var(--archive-muted)]/65
-                              "
-                            >
+                            <span className="text-[10px] text-[var(--archive-muted)]/55">
                               {messages.length} pesan hangat dari teman-teman
                             </span>
                           </div>
@@ -630,9 +608,7 @@ export default function WallPage() {
                                 text-[var(--archive-muted)]/45
                               "
                             >
-                              {myMessageCount > 0
-                                ? `${myMessageCount} pesan kamu sudah tersimpan.`
-                                : "Tulis pesan hangatmu di sini..."}
+                              Tulis pesan hangatmu di sini...
                             </p>
                           </div>
 
@@ -761,6 +737,8 @@ export default function WallPage() {
                               sm:justify-between
                             "
                           >
+                            {/* EMOJI */}
+
                             <div>
                               <p
                                 className="
@@ -1075,7 +1053,8 @@ export default function WallPage() {
                     className="
                       mb-4
                       flex h-14 w-14
-                      items-center justify-center
+                      items-center
+                      justify-center
                       rounded-full
                       border
                       border-white/10
@@ -1126,239 +1105,207 @@ export default function WallPage() {
                     "
                   >
                     <AnimatePresence mode="popLayout">
-                      {visibleMessages.map((wallMessage, index) => {
-                        const isMine = Boolean(
-                          currentUid && wallMessage.ownerUid === currentUid,
-                        );
+                      {visibleMessages.map((wallMessage, index) => (
+                        <motion.button
+                          key={wallMessage.id}
+                          type="button"
+                          layout
+                          initial={{
+                            opacity: 0,
+                            y: 25,
+                          }}
+                          animate={{
+                            opacity: 1,
+                            y: 0,
+                          }}
+                          exit={{
+                            opacity: 0,
+                            scale: 0.96,
+                          }}
+                          transition={{
+                            duration: 0.5,
+                            delay: Math.min(index * 0.06, 0.3),
+                            ease: [0.22, 1, 0.36, 1],
+                          }}
+                          whileHover={{
+                            y: -5,
+                          }}
+                          whileTap={{
+                            scale: 0.985,
+                          }}
+                          onClick={() => setOpenedMessage(wallMessage)}
+                          className={`
+                            group
+                            relative
+                            isolate
+                            min-h-[225px]
+                            overflow-hidden
+                            rounded-[22px]
+                            border
+                            bg-[#0b0e24]
+                            p-5
+                            text-left
+                            shadow-[0_15px_50px_rgba(0,0,0,0.22)]
+                            backdrop-blur-xl
+                            transition-all
+                            duration-500
+                            ${CARD_ACCENTS[index % CARD_ACCENTS.length]}
+                            border-white/[0.08]
+                          `}
+                        >
+                          {/* CARD BACKGROUND GLOW */}
 
-                        return (
-                          <motion.button
-                            key={wallMessage.id}
-                            type="button"
-                            layout
-                            initial={{
-                              opacity: 0,
-                              y: 25,
-                            }}
-                            animate={{
-                              opacity: 1,
-                              y: 0,
-                            }}
-                            exit={{
-                              opacity: 0,
-                              scale: 0.96,
-                            }}
-                            transition={{
-                              duration: 0.5,
-                              delay: Math.min(index * 0.06, 0.3),
-                              ease: [0.22, 1, 0.36, 1],
-                            }}
-                            whileHover={{
-                              y: -5,
-                            }}
-                            whileTap={{
-                              scale: 0.985,
-                            }}
-                            onClick={() => setOpenedMessage(wallMessage)}
-                            className={`
-                              group
-                              relative
-                              isolate
-                              min-h-[225px]
-                              overflow-hidden
-                              rounded-[22px]
-                              border
-                              bg-[#0b0e24]
-                              p-5
-                              text-left
-                              shadow-[0_15px_50px_rgba(0,0,0,0.22)]
-                              backdrop-blur-xl
+                          <div
+                            className="
+                              pointer-events-none
+                              absolute
+                              -right-14
+                              -top-14
+                              h-36
+                              w-36
+                              rounded-full
+                              bg-[var(--archive-pink-soft)]/[0.045]
+                              blur-[55px]
                               transition-all
-                              duration-500
-                              ${CARD_ACCENTS[index % CARD_ACCENTS.length]}
-                              ${
-                                isMine
-                                  ? "border-[var(--archive-pink-soft)]/25 shadow-[0_20px_60px_rgba(190,100,160,0.10)]"
-                                  : "border-white/[0.08]"
-                              }
-                            `}
-                          >
-                            {/* CARD BACKGROUND GLOW */}
+                              duration-700
+                              group-hover:bg-[var(--archive-pink-soft)]/[0.09]
+                            "
+                          />
 
-                            <div
-                              className="
-                                pointer-events-none
-                                absolute
-                                -right-14
-                                -top-14
-                                h-36
-                                w-36
-                                rounded-full
-                                bg-[var(--archive-pink-soft)]/[0.045]
-                                blur-[55px]
-                                transition-all
-                                duration-700
-                                group-hover:bg-[var(--archive-pink-soft)]/[0.09]
-                              "
-                            />
+                          <div
+                            className="
+                              pointer-events-none
+                              absolute
+                              -bottom-16
+                              left-1/3
+                              h-32
+                              w-32
+                              rounded-full
+                              bg-[var(--archive-gold)]/[0.025]
+                              blur-[55px]
+                            "
+                          />
 
-                            <div
-                              className="
-                                pointer-events-none
-                                absolute
-                                -bottom-16
-                                left-1/3
-                                h-32
-                                w-32
-                                rounded-full
-                                bg-[var(--archive-gold)]/[0.025]
-                                blur-[55px]
-                              "
-                            />
+                          <div className="relative flex h-full flex-col">
+                            {/* TOP */}
 
-                            <div className="relative flex h-full flex-col">
-                              {/* TOP */}
+                            <div className="flex items-start justify-between">
+                              <div className="flex items-center gap-3">
+                                <div
+                                  className="
+                                    flex h-10 w-10
+                                    items-center justify-center
+                                    rounded-xl
+                                    border
+                                    border-white/[0.08]
+                                    bg-white/[0.025]
+                                    text-[var(--archive-pink-soft)]/75
+                                  "
+                                >
+                                  <Mail size={16} />
+                                </div>
 
-                              <div className="flex items-start justify-between">
-                                <div className="flex items-center gap-3">
-                                  <div
+                                <div className="min-w-0">
+                                  <p
                                     className="
-                                      flex h-10 w-10
-                                      items-center justify-center
-                                      rounded-xl
-                                      border
-                                      border-white/[0.08]
-                                      bg-white/[0.025]
-                                      text-[var(--archive-pink-soft)]/75
+                                      max-w-[130px]
+                                      truncate
+                                      text-xs
+                                      font-semibold
+                                      text-[var(--archive-text)]
                                     "
                                   >
-                                    <Mail size={16} />
-                                  </div>
+                                    {wallMessage.name}
+                                  </p>
 
-                                  <div className="min-w-0">
-                                    <p
-                                      className="
-                                        max-w-[130px]
-                                        truncate
-                                        text-xs
-                                        font-semibold
-                                        text-[var(--archive-text)]
-                                      "
-                                    >
-                                      {wallMessage.name}
-                                    </p>
-
-                                    <p
-                                      className="
-                                        mt-0.5
-                                        text-[9px]
-                                        text-[var(--archive-muted)]/40
-                                      "
-                                    >
-                                      {formatDate(wallMessage.createdAt)}
-                                    </p>
-                                  </div>
-                                </div>
-
-                                <div className="flex items-center gap-2">
-                                  {isMine && (
-                                    <span
-                                      className="
-                                        rounded-full
-                                        border
-                                        border-[var(--archive-gold)]/20
-                                        bg-[var(--archive-gold)]/[0.06]
-                                        px-2
-                                        py-1
-                                        text-[7px]
-                                        font-semibold
-                                        uppercase
-                                        tracking-[0.12em]
-                                        text-[var(--archive-gold-soft)]
-                                      "
-                                    >
-                                      Kamu
-                                    </span>
-                                  )}
-
-                                  <span className="text-lg leading-none">
-                                    {wallMessage.emoji || "💌"}
-                                  </span>
+                                  <p
+                                    className="
+                                      mt-0.5
+                                      text-[9px]
+                                      text-[var(--archive-muted)]/40
+                                    "
+                                  >
+                                    {formatDate(wallMessage.createdAt)}
+                                  </p>
                                 </div>
                               </div>
 
-                              {/* MESSAGE */}
-
-                              <div className="mt-6 flex-1">
-                                <p
-                                  className="
-                                    line-clamp-5
-                                    text-sm
-                                    leading-6
-                                    text-[var(--archive-muted)]/75
-                                  "
-                                >
-                                  {wallMessage.message}
-                                </p>
-                              </div>
-
-                              {/* BOTTOM */}
-
-                              <div
-                                className="
-                                  mt-5
-                                  flex
-                                  items-center
-                                  justify-between
-                                "
-                              >
-                                <span
-                                  className="
-                                    text-[8px]
-                                    uppercase
-                                    tracking-[0.16em]
-                                    text-[var(--archive-muted)]/25
-                                  "
-                                >
-                                  Friendship Wall
-                                </span>
-
-                                <Heart
-                                  size={14}
-                                  fill="currentColor"
-                                  className="
-                                    text-[var(--archive-pink-soft)]/60
-                                    transition-transform
-                                    duration-300
-                                    group-hover:scale-110
-                                    group-hover:text-[var(--archive-pink-soft)]
-                                  "
-                                />
-                              </div>
+                              <span className="text-lg leading-none">
+                                {wallMessage.emoji || "💌"}
+                              </span>
                             </div>
 
-                            {/* BOTTOM SHINE */}
+                            {/* MESSAGE */}
+
+                            <div className="mt-6 flex-1">
+                              <p
+                                className="
+                                  line-clamp-5
+                                  text-sm
+                                  leading-6
+                                  text-[var(--archive-muted)]/75
+                                "
+                              >
+                                {wallMessage.message}
+                              </p>
+                            </div>
+
+                            {/* BOTTOM */}
 
                             <div
                               className="
-                                pointer-events-none
-                                absolute
-                                inset-x-0
-                                bottom-0
-                                h-px
-                                bg-gradient-to-r
-                                from-transparent
-                                via-[var(--archive-gold)]/30
-                                to-transparent
-                                opacity-0
-                                transition-opacity
-                                duration-500
-                                group-hover:opacity-100
+                                mt-5
+                                flex
+                                items-center
+                                justify-between
                               "
-                            />
-                          </motion.button>
-                        );
-                      })}
+                            >
+                              <span
+                                className="
+                                  text-[8px]
+                                  uppercase
+                                  tracking-[0.16em]
+                                  text-[var(--archive-muted)]/25
+                                "
+                              >
+                                Friendship Wall
+                              </span>
+
+                              <Heart
+                                size={14}
+                                fill="currentColor"
+                                className="
+                                  text-[var(--archive-pink-soft)]/60
+                                  transition-transform
+                                  duration-300
+                                  group-hover:scale-110
+                                  group-hover:text-[var(--archive-pink-soft)]
+                                "
+                              />
+                            </div>
+                          </div>
+
+                          {/* BOTTOM SHINE */}
+
+                          <div
+                            className="
+                              pointer-events-none
+                              absolute
+                              inset-x-0
+                              bottom-0
+                              h-px
+                              bg-gradient-to-r
+                              from-transparent
+                              via-[var(--archive-gold)]/30
+                              to-transparent
+                              opacity-0
+                              transition-opacity
+                              duration-500
+                              group-hover:opacity-100
+                            "
+                          />
+                        </motion.button>
+                      ))}
                     </AnimatePresence>
                   </div>
 
@@ -1560,7 +1507,9 @@ export default function WallPage() {
                     absolute
                     right-4
                     top-4
-                    flex h-9 w-9
+                    flex
+                    h-9
+                    w-9
                     items-center
                     justify-center
                     rounded-full

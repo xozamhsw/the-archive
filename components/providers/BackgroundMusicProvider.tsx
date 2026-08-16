@@ -26,6 +26,7 @@ const MUSIC_TRACKS: MusicTrack[] = [
     src: "/audio/The Temper Trap - Sweet Disposition.mp3",
   },
 ];
+
 const MUSIC_ACTIVATED_KEY = "the-archive-music-activated";
 const MUSIC_PLAYING_KEY = "the-archive-music-playing";
 const MUSIC_VOLUME_KEY = "the-archive-music-volume";

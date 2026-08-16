@@ -24,7 +24,7 @@ import {
   Timestamp,
 } from "firebase/firestore";
 
-import { db, ensurePublicUser } from "@/lib/firebase";
+import { publicDb, ensurePublicUser } from "@/lib/firebase";
 
 import ArchiveShell from "@/components/ui/ArchiveShell";
 import ArchiveContainer from "@/components/ui/ArchiveContainer";
@@ -32,14 +32,26 @@ import SectionBadge from "@/components/ui/SectionBadge";
 import PageNumber from "@/components/ui/PageNumber";
 import JourneyNavigation from "@/components/navigation/JourneyNavigation";
 
+/* =========================================================
+   CONSTANT
+========================================================= */
+
 const CAPSULE_STORAGE_KEY = "the-archive-my-capsule";
+
+/* =========================================================
+   TYPES
+========================================================= */
 
 interface CapsuleData {
   message: string;
   unlockDate: Timestamp;
   createdAt: Timestamp | null;
-  ownerUid?: string;
+  ownerUid: string;
 }
+
+/* =========================================================
+   HELPERS
+========================================================= */
 
 function formatLongDate(date: Date) {
   return new Intl.DateTimeFormat("id-ID", {
@@ -76,7 +88,7 @@ function isPermissionDeniedError(error: unknown) {
 }
 
 /* =========================================================
-   CAPSULE VISUAL
+   CAPSULE ARTWORK
 ========================================================= */
 
 function CapsuleArtwork({ type }: { type: "envelope" | "bottle" | "moon" }) {
@@ -101,10 +113,6 @@ function CapsuleArtwork({ type }: { type: "envelope" | "bottle" | "moon" }) {
         sm:w-[270px]
       "
     >
-      {/* =====================================================
-          SOFT GLOW
-      ====================================================== */}
-
       <div
         aria-hidden="true"
         className="
@@ -115,10 +123,6 @@ function CapsuleArtwork({ type }: { type: "envelope" | "bottle" | "moon" }) {
           blur-[38px]
         "
       />
-
-      {/* =====================================================
-          GLOW ASSET
-      ====================================================== */}
 
       <Image
         src="/capsule/capsule-glow.png"
@@ -133,10 +137,6 @@ function CapsuleArtwork({ type }: { type: "envelope" | "bottle" | "moon" }) {
           blur-[1px]
         "
       />
-
-      {/* =====================================================
-          MAIN PNG ARTWORK
-      ====================================================== */}
 
       <motion.div
         animate={{
@@ -216,7 +216,6 @@ function CapsuleCard({
         ${className}
       `}
     >
-      {/* Ambient card glow */}
       <div
         aria-hidden="true"
         className="
@@ -231,7 +230,6 @@ function CapsuleCard({
         "
       />
 
-      {/* Top shine */}
       <div
         aria-hidden="true"
         className="
@@ -249,7 +247,6 @@ function CapsuleCard({
 
       <div className="relative z-10">{children}</div>
 
-      {/* Bottom shine */}
       <div
         aria-hidden="true"
         className="
@@ -278,19 +275,27 @@ function CapsuleCard({
 
 export default function CapsulePage() {
   const [capsuleId, setCapsuleId] = useState<string | null>(null);
+
   const [capsuleData, setCapsuleData] = useState<CapsuleData | null>(null);
 
   const [loadingCapsule, setLoadingCapsule] = useState(true);
+
   const [futureMessage, setFutureMessage] = useState("");
+
   const [savingCapsule, setSavingCapsule] = useState(false);
+
   const [capsuleError, setCapsuleError] = useState<string | null>(null);
 
   const [revealed, setRevealed] = useState(false);
 
   const [feedbackName, setFeedbackName] = useState("");
+
   const [feedbackMessage, setFeedbackMessage] = useState("");
+
   const [sendingFeedback, setSendingFeedback] = useState(false);
+
   const [feedbackSent, setFeedbackSent] = useState(false);
+
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
 
   /* =========================================================
@@ -303,22 +308,34 @@ export default function CapsulePage() {
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
-          await ensurePublicUser();
+          /*
+           * Pastikan anonymous authentication
+           * sudah tersedia sebelum membaca Firestore.
+           */
+          const user = await ensurePublicUser();
 
           if (cancelled) return;
 
           const storedId = localStorage.getItem(CAPSULE_STORAGE_KEY);
 
+          /*
+           * Belum pernah membuat capsule.
+           */
           if (!storedId) {
             setLoadingCapsule(false);
             return;
           }
 
           try {
-            const snapshot = await getDoc(doc(db, "timeCapsules", storedId));
+            const capsuleRef = doc(publicDb, "timeCapsules", storedId);
+
+            const snapshot = await getDoc(capsuleRef);
 
             if (cancelled) return;
 
+            /*
+             * Capsule sudah tidak ada.
+             */
             if (!snapshot.exists()) {
               localStorage.removeItem(CAPSULE_STORAGE_KEY);
 
@@ -331,21 +348,44 @@ export default function CapsulePage() {
 
             const data = snapshot.data() as CapsuleData;
 
+            /*
+             * Validasi tambahan di client.
+             *
+             * Walaupun rules Firestore sudah
+             * melakukan validasi server-side,
+             * kita tetap memastikan capsule
+             * benar-benar milik session ini.
+             */
+            if (!data.ownerUid || data.ownerUid !== user.uid) {
+              localStorage.removeItem(CAPSULE_STORAGE_KEY);
+
+              setCapsuleId(null);
+              setCapsuleData(null);
+              setCapsuleError(null);
+
+              return;
+            }
+
             setCapsuleId(storedId);
             setCapsuleData(data);
             setCapsuleError(null);
           } catch (readError) {
+            console.error("Read Time Capsule error:", readError);
+
+            /*
+             * JANGAN menghapus localStorage
+             * hanya karena permission denied.
+             *
+             * Permission denied bisa berarti:
+             * - rules salah
+             * - auth belum aktif
+             * - project Firebase berbeda
+             */
             if (isPermissionDeniedError(readError)) {
-              console.info(
-                "Stored Time Capsule no longer belongs to this visitor session.",
-              );
-
-              localStorage.removeItem(CAPSULE_STORAGE_KEY);
-
               if (!cancelled) {
-                setCapsuleId(null);
-                setCapsuleData(null);
-                setCapsuleError(null);
+                setCapsuleError(
+                  "Time Capsule tidak dapat diakses. Pastikan Anonymous Authentication dan Firestore Rules sudah aktif.",
+                );
               }
 
               return;
@@ -384,11 +424,13 @@ export default function CapsulePage() {
 
     if (!trimmedMessage) {
       setCapsuleError("Tulis dulu pesan untuk dirimu di masa depan.");
+
       return;
     }
 
     if (trimmedMessage.length > 5000) {
       setCapsuleError("Pesan maksimal 5000 karakter.");
+
       return;
     }
 
@@ -396,7 +438,15 @@ export default function CapsulePage() {
     setCapsuleError(null);
 
     try {
+      /*
+       * Pastikan visitor sudah memiliki
+       * anonymous Firebase UID.
+       */
       const user = await ensurePublicUser();
+
+      if (!user.uid) {
+        throw new Error("Anonymous user UID tidak tersedia.");
+      }
 
       const unlockDate = new Date();
 
@@ -404,21 +454,45 @@ export default function CapsulePage() {
 
       const unlockTimestamp = Timestamp.fromDate(unlockDate);
 
-      const documentReference = await addDoc(collection(db, "timeCapsules"), {
-        message: trimmedMessage,
-        unlockDate: unlockTimestamp,
-        ownerUid: user.uid,
-        createdAt: serverTimestamp(),
-      });
+      /*
+       * Firestore create.
+       *
+       * Rules akan memastikan:
+       *
+       * request.auth.uid
+       * ===
+       * request.resource.data.ownerUid
+       */
+      const documentReference = await addDoc(
+        collection(publicDb, "timeCapsules"),
+        {
+          message: trimmedMessage,
 
+          unlockDate: unlockTimestamp,
+
+          ownerUid: user.uid,
+
+          createdAt: serverTimestamp(),
+        },
+      );
+
+      /*
+       * Simpan ID capsule di browser.
+       */
       localStorage.setItem(CAPSULE_STORAGE_KEY, documentReference.id);
 
+      /*
+       * Update UI tanpa reload.
+       */
       setCapsuleId(documentReference.id);
 
       setCapsuleData({
         message: trimmedMessage,
+
         unlockDate: unlockTimestamp,
+
         ownerUid: user.uid,
+
         createdAt: Timestamp.now(),
       });
 
@@ -427,7 +501,13 @@ export default function CapsulePage() {
     } catch (saveError) {
       console.error("Save Time Capsule error:", saveError);
 
-      setCapsuleError("Time Capsule gagal disimpan. Silakan coba lagi.");
+      if (isPermissionDeniedError(saveError)) {
+        setCapsuleError(
+          "Firebase menolak penyimpanan Time Capsule. Pastikan Anonymous Authentication aktif dan Firestore Rules sudah dipublish.",
+        );
+      } else {
+        setCapsuleError("Time Capsule gagal disimpan. Silakan coba lagi.");
+      }
     } finally {
       setSavingCapsule(false);
     }
@@ -439,20 +519,24 @@ export default function CapsulePage() {
 
   async function handleSendFeedback() {
     const trimmedMessage = feedbackMessage.trim();
+
     const trimmedName = feedbackName.trim() || "Anonim";
 
     if (!trimmedMessage) {
       setFeedbackError("Tulis dulu pesannya ya.");
+
       return;
     }
 
     if (trimmedName.length > 80) {
       setFeedbackError("Nama maksimal 80 karakter.");
+
       return;
     }
 
     if (trimmedMessage.length > 3000) {
       setFeedbackError("Pesan maksimal 3000 karakter.");
+
       return;
     }
 
@@ -462,10 +546,17 @@ export default function CapsulePage() {
     try {
       const user = await ensurePublicUser();
 
-      await addDoc(collection(db, "feedback"), {
+      if (!user.uid) {
+        throw new Error("Anonymous user UID tidak tersedia.");
+      }
+
+      await addDoc(collection(publicDb, "feedback"), {
         name: trimmedName,
+
         message: trimmedMessage,
+
         ownerUid: user.uid,
+
         createdAt: serverTimestamp(),
       });
 
@@ -475,7 +566,13 @@ export default function CapsulePage() {
     } catch (sendError) {
       console.error("Send feedback error:", sendError);
 
-      setFeedbackError("Pesan gagal dikirim. Silakan coba lagi.");
+      if (isPermissionDeniedError(sendError)) {
+        setFeedbackError(
+          "Firebase menolak pengiriman pesan. Pastikan Anonymous Authentication dan Firestore Rules sudah aktif.",
+        );
+      } else {
+        setFeedbackError("Pesan gagal dikirim. Silakan coba lagi.");
+      }
     } finally {
       setSendingFeedback(false);
     }
@@ -496,7 +593,7 @@ export default function CapsulePage() {
   }, [unlockDate]);
 
   /* =========================================================
-     MAIN
+     RENDER
   ========================================================= */
 
   return (
@@ -515,7 +612,6 @@ export default function CapsulePage() {
             overflow-hidden
           "
         >
-          {/* Purple glow */}
           <div
             className="
               archive-ambient-pulse
@@ -532,7 +628,6 @@ export default function CapsulePage() {
             "
           />
 
-          {/* Gold glow */}
           <div
             className="
               absolute
@@ -545,10 +640,6 @@ export default function CapsulePage() {
               blur-[100px]
             "
           />
-
-          {/* =================================================
-              CAPSULE GLOW PNG
-          ================================================== */}
 
           <div
             className="
@@ -571,7 +662,6 @@ export default function CapsulePage() {
             />
           </div>
 
-          {/* Bottom glow */}
           <div
             className="
               absolute
@@ -792,7 +882,7 @@ export default function CapsulePage() {
         </section>
 
         {/* =====================================================
-            CAPSULE CONTENT
+            CONTENT
         ====================================================== */}
 
         <section className="relative pb-8">
@@ -1124,15 +1214,27 @@ export default function CapsulePage() {
                           rounded-2xl
                           border
                           border-white/[0.06]
-                          bg-white/[0.015]
-                          px-6
-                          py-5
+                          bg-white/[0.025]
+                          px-5
+                          py-4
                         "
                       >
                         <p
                           className="
+                            text-[8px]
+                            uppercase
+                            tracking-[0.18em]
+                            text-[var(--archive-muted)]/40
+                          "
+                        >
+                          Dibuka dalam
+                        </p>
+
+                        <p
+                          className="
+                            mt-2
                             text-4xl
-                            font-semibold
+                            font-medium
                             tracking-[-0.04em]
                             text-[var(--archive-gold-soft)]
                           "
@@ -1655,7 +1757,7 @@ export default function CapsulePage() {
             </div>
 
             {/* =================================================
-                FOOTER DECORATION
+                FOOTER
             ================================================== */}
 
             <div
@@ -1698,10 +1800,6 @@ export default function CapsulePage() {
                 "
               />
             </div>
-
-            {/* =================================================
-                NAVIGATION
-            ================================================== */}
 
             <div className="mt-8">
               <JourneyNavigation />

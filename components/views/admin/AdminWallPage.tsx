@@ -1043,7 +1043,7 @@ function SearchEmptyState({
       </p>
 
       <p className="mt-1 text-xs text-white/25">
-        Tidak ada hasil untuk "{searchQuery}".
+        Tidak ada hasil untuk &quot;{searchQuery}&quot;.
       </p>
 
       <button

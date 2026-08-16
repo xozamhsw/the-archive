@@ -4,6 +4,10 @@ import { getAuth, signInAnonymously, type User } from "firebase/auth";
 
 import { getFirestore } from "firebase/firestore";
 
+/* =========================================================
+   FIREBASE CONFIG
+========================================================= */
+
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
 
@@ -18,17 +22,9 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-/**
- * =========================================================
- * ADMIN / DEFAULT FIREBASE APP
- * =========================================================
- *
- * Digunakan untuk:
- *
- * - Admin authentication
- * - Admin Firestore
- * - Public Firestore operations yang memang no-auth
- */
+/* =========================================================
+   DEFAULT / ADMIN APP
+========================================================= */
 
 const defaultApp =
   getApps().find((firebaseApp) => firebaseApp.name === "[DEFAULT]") ??
@@ -38,19 +34,19 @@ export const auth = getAuth(defaultApp);
 
 export const db = getFirestore(defaultApp);
 
-/**
- * =========================================================
- * TEMPORARY PUBLIC AUTH APP
- * =========================================================
- *
- * HANYA untuk Wall dan Capsule versi lama.
- *
- * Ini sengaja dipisahkan dari admin auth supaya
- * Anonymous Auth tidak pernah mengganti session admin.
- *
- * Setelah Wall + Capsule selesai dimigrasikan ke no-auth,
- * seluruh bagian ini akan kita hapus.
- */
+/* =========================================================
+   PUBLIC LEGACY APP
+=========================================================
+
+   App ini digunakan khusus untuk visitor/public features:
+
+   - Friendship Wall
+   - Time Capsule
+   - Feedback
+
+   Anonymous Authentication digunakan di sini supaya
+   session visitor terpisah dari session admin.
+========================================================= */
 
 const PUBLIC_APP_NAME = "the-archive-public-legacy";
 
@@ -72,38 +68,41 @@ export const publicAuth = getAuth(publicApp);
 
 export const publicDb = getFirestore(publicApp);
 
-/**
- * =========================================================
- * TEMPORARY LEGACY PUBLIC USER
- * =========================================================
- *
- * HANYA untuk:
- *
- * - Friendship Wall lama
- * - Time Capsule lama
- * - Feedback lama
- *
- * Jangan digunakan oleh Photobooth.
- */
+/* =========================================================
+   ENSURE PUBLIC ANONYMOUS USER
+========================================================= */
+
 export async function ensurePublicUser(): Promise<User> {
+  /*
+   * Tunggu sampai Firebase selesai menentukan apakah
+   * sudah ada session anonymous sebelumnya.
+   */
   await publicAuth.authStateReady();
 
+  /*
+   * Kalau visitor sudah mempunyai session,
+   * gunakan session tersebut.
+   */
   if (publicAuth.currentUser) {
     return publicAuth.currentUser;
   }
 
+  /*
+   * Kalau belum ada session, buat anonymous user baru.
+   */
   const credential = await signInAnonymously(publicAuth);
 
   return credential.user;
 }
 
-/**
- * =========================================================
- * ADMIN SESSION VERIFICATION
- * =========================================================
- */
+/* =========================================================
+   ADMIN SESSION VERIFICATION
+========================================================= */
 
 export async function verifyAdminSession(user: User): Promise<boolean> {
+  /*
+   * Anonymous user tidak boleh dianggap sebagai admin.
+   */
   if (user.isAnonymous) {
     return false;
   }
